@@ -1,10 +1,16 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const { publicGame, publicTeam, publicTournament, applyEvent, undoLast, clockAction, endGame } = require('./gameplay');
 const { ensureAdmin, bad, str, optionalDate, httpUrl } = require('./api-helpers');
-const { newId } = require('./store');
+const { newId, DATA_DIR } = require('./store');
 const { advanceTournament } = require('./bracket');
+
+// Camera broadcasts are recorded in the browser and uploaded here, so a
+// finished game keeps its video for anyone who opens it later.
+const RECORDINGS_DIR = path.join(DATA_DIR, 'recordings');
 
 function createGamesApi({ store, hub, pushGame }) {
   const router = express.Router();
@@ -127,12 +133,83 @@ function createGamesApi({ store, hub, pushGame }) {
     const ctx = load(req, res);
     if (!ctx) return;
     store.remove('games', ctx.game.id);
+    if (ctx.game.recording) {
+      fs.promises.unlink(path.join(RECORDINGS_DIR, `${ctx.game.id}.webm`)).catch(() => {});
+    }
     // A quick game owns a throwaway tournament: drop it with its last game.
     if (ctx.tournament.quick && store.gamesOf(ctx.tournament.id).length === 0) {
       for (const team of store.teamsOf(ctx.tournament.id)) store.remove('teams', team.id);
       store.remove('tournaments', ctx.tournament.id);
     }
     res.json({ ok: true });
+  });
+
+  // Save the broadcast recording. Admins only; the file overwrites the previous one.
+  // The body is streamed straight to disk, so a long match never sits in memory.
+  function saveRecording(req, res) {
+    const ctx = load(req, res);
+    if (!ctx) return;
+    const target = path.join(RECORDINGS_DIR, `${ctx.game.id}.webm`);
+    const partial = `${target}.part`;
+    let bytes = 0;
+    let failed = false;
+
+    fs.promises.mkdir(RECORDINGS_DIR, { recursive: true }).then(() => {
+      const out = fs.createWriteStream(partial);
+      req.on('data', chunk => { bytes += chunk.length; });
+      req.on('aborted', () => {
+        failed = true;
+        out.destroy();
+        fs.promises.unlink(partial).catch(() => {});
+      });
+      out.on('error', err => {
+        failed = true;
+        console.error('Could not save the recording:', err);
+        if (!res.headersSent) bad(res, 'Could not save the recording', 500);
+      });
+      out.on('finish', async () => {
+        if (failed) return;
+        if (bytes < 1024) {
+          await fs.promises.unlink(partial).catch(() => {});
+          return bad(res, 'No video data received', 400);
+        }
+        try {
+          await fs.promises.rename(partial, target);
+        } catch (err) {
+          console.error('Could not store the recording:', err);
+          return bad(res, 'Could not save the recording', 500);
+        }
+        const duration = Number(req.query.duration);
+        ctx.game.recording = {
+          size: bytes,
+          duration: Number.isFinite(duration) && duration > 0 ? Math.round(duration) : null,
+          savedAt: Date.now()
+        };
+        ctx.game.updatedAt = Date.now();
+        store.save();
+        pushGame(ctx.game);
+        res.json({ ok: true, game: publicGame(ctx.game) });
+      });
+      req.pipe(out);
+    }).catch(err => {
+      console.error('Could not create the recordings folder:', err);
+      bad(res, 'Could not save the recording', 500);
+    });
+  }
+  // POST as well, so the browser can flush a recording with sendBeacon on page close.
+  router.put('/games/:id/recording', saveRecording);
+  router.post('/games/:id/recording', saveRecording);
+
+  // Anyone signed in can watch a finished game's recording, viewers included.
+  router.get('/games/:id/recording', (req, res) => {
+    const game = store.game(req.params.id);
+    if (!game) return bad(res, 'Game not found', 404);
+    if (!game.recording) return bad(res, 'This game has no recording', 404);
+    res.type('video/webm');
+    res.setHeader('Cache-Control', 'private, max-age=0');
+    res.sendFile(path.join(RECORDINGS_DIR, `${game.id}.webm`), err => {
+      if (err && !res.headersSent) bad(res, 'This game has no recording', 404);
+    });
   });
 
   router.post('/games/:id/events', (req, res) => {

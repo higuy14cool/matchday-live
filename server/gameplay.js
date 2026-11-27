@@ -77,6 +77,14 @@ function publicGame(g) {
     shootoutOnly: Boolean(g.shootoutOnly),
     events: g.events.slice(-80),
     streamUrl: g.streamUrl || '',
+    recording: g.recording
+      ? {
+        available: true,
+        duration: g.recording.duration || null,
+        size: g.recording.size || 0,
+        savedAt: g.recording.savedAt || null
+      }
+      : null,
     updatedAt: g.updatedAt
   };
 }

@@ -38,7 +38,7 @@ export function gameRow(game, home, away) {
       <div class="game-side away right">${crest(away)}<span class="nm">${esc(away ? away.name : 'Away')}</span></div>
       <div class="game-when">
         <b>${esc(when)}</b>
-        <span>${game.status === 'live' ? esc(clock.text) : esc(game.round || '')}</span>
+        <span>${game.status === 'live' ? esc(clock.text) : esc(game.round || '')}${game.recording && game.recording.available ? ' · ▶ Replay' : ''}</span>
       </div>
     </a>`;
 }

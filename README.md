@@ -22,6 +22,8 @@ One small Node server, no build step, no database to install.
 - **Full screen while filming** – the admin filming a game gets a **⛶ Full screen** button next to the camera controls. The video, the referee bar and the call overlays fill the screen; the button turns into **⤢ Exit full screen**.
 - **Penalty shootouts** – in a knockout game, after extra time (2nd half → ET 1 → ET 2) the next clock step offers **Penalty shootout**. From then on, adding or removing a goal counts a penalty instead of a match goal, the scoreboard shows a **Pens 3–2** pill, and the big board shows it too. **← Leave penalties** goes back if you pressed it by mistake.
 - **Penalty-only games** – tick *Penalty shootout only (no clock)* when creating a soccer game (quick game or tournament game) to start straight in a shootout with no match clock.
+- **Scoreboard on the video** – while a game is live (or a recording is playing) the score, period and clock sit in the **top-left corner of the picture**, like a broadcast score bug. They follow the scoreboard in real time.
+- **Replays of finished games** – while the admin films, the browser records the camera and uploads it when the stream stops or the game ends. The game page then shows the **▶ Replay** player to everyone, including viewers of a finished game. Games with a recording carry a **▶ Replay** note in the tournament fixture list. Deleting a game deletes its video too.
 - **Deleting games** – the organizer can delete a game from its page (**🗑 Delete game** in the controls) or from the **🗑** button next to each fixture in a tournament. The game, its score and its events go; a one-game quick tournament goes with it. Viewers never see the button.
 - **Referee bar while filming** – on a live game the admin gets a row of buttons under the video: VAR, yellow card, red card, second yellow → red, add a goal, subtract a goal. Each one asks who it is for (team and player, or a VAR description), then the call appears in the video's left corner for every viewer. Goals change only the scoreboard. Viewers never receive these buttons.
 - **Accounts page** (`#/users`) – the admin makes a username and password for each viewer, so they can sign in on their own computer; deleting an account signs that viewer out at once.
@@ -65,6 +67,9 @@ With no tournaments yet, the home page shows **Load demo data** (admin only, or 
 - One broadcaster per game; if a second organizer goes live, the first is stepped down and viewers switch to the new stream.
 - Embedded links need no camera and work for any number of viewers, but only while no one is broadcasting from a camera.
 - Video is peer to peer (WebRTC); the server only relays signalling messages.
+- The broadcaster's browser records the camera with `MediaRecorder` (WebM) and uploads it to `/api/games/:id/recording` when the stream stops, when the game ends, or on page close. Files live in `DATA_DIR/recordings/<game-id>.webm` and are served by `GET /api/games/:id/recording` (signed-in accounts only, seekable).
+- Recordings are typically 1–2 GB per hour. The upload is streamed to disk, never buffered in memory, so disk space is the limit to watch.
+- Chrome reports an unknown duration for recorded WebM; the replay player scans it once on load so the seek bar and length show correctly.
 
 ## API at a glance
 
@@ -142,9 +147,21 @@ public/   plain ES modules + CSS (no bundler)
 test/     node:test suites for the REST API and the live layer
 ```
 
+## Recordings API
+
+| Method | Path                         | Purpose                                            |
+| ------ | ---------------------------- | -------------------------------------------------- |
+| `PUT`  | `/api/games/:id/recording`   | admin: upload the recording (`video/webm` body, `?duration=` seconds) |
+| `POST` | `/api/games/:id/recording`   | same, used by `sendBeacon` when the tab closes      |
+| `GET`  | `/api/games/:id/recording`   | any signed-in account: stream the video (Range supported) |
+
+`GET /api/games/:id` and the game lists report `recording: {available, duration, size, savedAt}`.
+
 ## Known limits
 
 - Sessions live in memory: a restart signs everyone out (accounts themselves persist in `db.json`).
 - Anyone with an admin account can change any tournament; there is no per-tournament ownership.
 - The JSON store is single-process; it is fine for a club or a school, not for a fleet of servers.
 - Camera streams are peer to peer, so a very large audience needs an embedded stream or an SFU.
+- A recording is kept while it is being made: closing the tab mid-broadcast tries a final `sendBeacon` upload, but a crash can lose the last few seconds. Re-recording a game replaces its previous video.
+- Recordings stay on the server's disk; back `DATA_DIR` up if the videos matter.

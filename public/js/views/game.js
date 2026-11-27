@@ -116,13 +116,15 @@ function stageHTML() {
   return `
     <div class="stage" id="stage">
       <video id="stage-video" playsinline autoplay hidden></video>
+      <video id="replay-video" playsinline controls preload="metadata" hidden></video>
       <iframe id="stage-frame" class="stage-embed" title="Live video" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen hidden></iframe>
       <div class="stage-placeholder" id="stage-placeholder"></div>
       <div class="stage-top" id="stage-top">
         <span class="stage-badge hidden" id="stage-live-badge"><span style="color:var(--red)">●</span> LIVE</span>
+        <span class="stage-badge hidden" id="stage-replay-badge">▶ Replay</span>
         <span class="stage-badge hidden" id="stage-viewers"></span>
       </div>
-      <div class="stage-overlay hidden" id="stage-overlay"></div>
+      <div class="stage-overlay" id="stage-overlay"></div>
       <div class="stage-events" id="stage-events" hidden></div>
       <div class="stage-actbar hidden" id="stage-actbar"></div>
     </div>`;
@@ -139,6 +141,9 @@ export async function renderGame(app, id) {
   let broadcaster = null;
   let broadcasterActive = false;
   let viewer = null;
+  let recorder = null;
+  let recordedChunks = [];
+  let recordStartedAt = 0;
   let videoReady = false;
   let remoteOnAir = false;
   let viewers = 0;
@@ -200,12 +205,25 @@ export async function renderGame(app, id) {
   const feedEl = $('#feed');
   const controlHost = $('#control-host');
   const videoEl = $('#stage-video');
+  const replayEl = $('#replay-video');
   const frameEl = $('#stage-frame');
   const placeholderEl = $('#stage-placeholder');
   const overlayEl = $('#stage-overlay');
   const liveBadge = $('#stage-live-badge');
   const viewersEl = $('#stage-viewers');
   const stageEl = $('#stage');
+  // Chrome reports an unknown (Infinity) duration for browser-recorded webm.
+  // Seeking far ahead makes it scan the file and report the real length.
+  replayEl.addEventListener('loadedmetadata', () => {
+    if (replayEl.duration !== Infinity) return;
+    replayEl.currentTime = 1e101;
+    const settle = () => {
+      if (!Number.isFinite(replayEl.duration)) return;
+      replayEl.removeEventListener('durationchange', settle);
+      replayEl.currentTime = 0;
+    };
+    replayEl.addEventListener('durationchange', settle);
+  });
   stageEl.addEventListener('click', e => {
     const btn = e.target.closest('[data-rapid]');
     if (!btn || !owner) return;
@@ -220,6 +238,7 @@ export async function renderGame(app, id) {
     if (game.round) meta.push(`<span>${esc(game.round)}</span>`);
     if (game.venue) meta.push(`<span>📍 ${esc(game.venue)}</span>`);
     meta.push(`<span>${esc(new Date(game.scheduledAt).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>`);
+    if (game.recording && game.recording.available) meta.push('<span class="pill" style="color:var(--lime);border-color:rgba(154,230,75,.3)">▶ Recording</span>');
     if (owner) meta.push('<span class="pill" style="color:var(--lime);border-color:rgba(154,230,75,.3)">Organizer</span>');
     $('#head-meta').innerHTML = meta.join('');
     $('#back-link').setAttribute('href', `#/t/${encodeURIComponent(game.tournamentId)}`);
@@ -254,7 +273,9 @@ export async function renderGame(app, id) {
     const rawEmbed = game.streamUrl ? embedUrl(game.streamUrl) : '';
     const hasEmbed = Boolean(rawEmbed) && !broadcasterActive && !remoteOnAir;
     const showVideo = !hasEmbed && (broadcasterActive || remoteOnAir);
-    stageState = hasEmbed ? 'embed' : broadcasterActive ? 'broadcast' : remoteOnAir ? 'remote' : 'idle';
+    // A finished game keeps the video the organizer recorded while broadcasting.
+    const hasReplay = Boolean(game.recording && game.recording.available) && !hasEmbed && !showVideo;
+    stageState = hasEmbed ? 'embed' : broadcasterActive ? 'broadcast' : remoteOnAir ? 'remote' : hasReplay ? 'replay' : 'idle';
 
     frameEl.hidden = !hasEmbed;
     if (hasEmbed && frameEl.dataset.src !== rawEmbed) {
@@ -263,11 +284,25 @@ export async function renderGame(app, id) {
     }
     videoEl.hidden = !showVideo;
     videoEl.controls = showVideo && !broadcasterActive;
-    overlayEl.hidden = !showVideo || (remoteOnAir && !videoReady);
+    if (hasReplay) {
+      const src = `/api/games/${encodeURIComponent(game.id)}/recording`;
+      if (replayEl.dataset.src !== src) {
+        replayEl.dataset.src = src;
+        replayEl.src = src;
+      }
+      replayEl.hidden = false;
+    } else {
+      replayEl.hidden = true;
+      if (!replayEl.paused) replayEl.pause();
+    }
+    $('#stage-replay-badge').classList.toggle('hidden', !hasReplay);
+    overlayEl.hidden = !(showVideo || hasReplay) || (remoteOnAir && !videoReady);
     liveBadge.classList.toggle('hidden', !showVideo);
     viewersEl.classList.toggle('hidden', !showVideo);
 
-    if (showVideo && (broadcasterActive || videoReady)) {
+    if (hasReplay) {
+      placeholderEl.hidden = true;
+    } else if (showVideo && (broadcasterActive || videoReady)) {
       placeholderEl.hidden = true;
     } else {
       placeholderEl.hidden = false;
@@ -276,22 +311,25 @@ export async function renderGame(app, id) {
         ? '<span class="big">📡</span><strong>Connecting to the broadcast…</strong><span class="tiny">The video starts in a moment. Tap the player if it stays black.</span>'
         : rawEmbed
           ? '<span class="big">📺</span><strong>Embedded stream</strong><span class="tiny">The organizer linked a video for this game.</span>'
-          : `<span class="big">🎥</span><strong>No video yet</strong><span class="tiny">${canGoLive ? 'Press “Go live” to broadcast from this device with the scoreboard on screen.' : 'The organizer has not started the video for this game.'}</span>`;
+          : `<span class="big">🎥</span><strong>${game.status === 'final' ? 'No recording of this game' : 'No video yet'}</strong><span class="tiny">${game.status === 'final'
+            ? (owner ? 'Reopen the game and go live to record a new one.' : 'The organizer did not record this match.')
+            : canGoLive ? 'Press “Go live” to broadcast from this device with the scoreboard on screen. The broadcast is recorded, so viewers can replay it later.' : 'The organizer has not started the video for this game.'}</span>`;
     }
 
     viewersEl.textContent = showVideo ? `${viewers} watching` : '';
-    $('#stream-mode').textContent = broadcasterActive ? 'You are live' : remoteOnAir ? 'On air' : hasEmbed ? 'Embedded' : '';
+    $('#stream-mode').textContent = broadcasterActive ? 'You are live' : remoteOnAir ? 'On air' : hasEmbed ? 'Embedded' : hasReplay ? 'Recording' : '';
     $('#go-live-btn').classList.toggle('hidden', !owner || broadcasterActive);
     const embedBtn = $('#embed-btn');
     embedBtn.classList.toggle('hidden', !owner || broadcasterActive);
     embedBtn.textContent = rawEmbed ? 'Change embed link' : 'Embed a link';
     $('#stop-live-btn').classList.toggle('hidden', !broadcasterActive);
-    $('#fs-btn').classList.toggle('hidden', !showVideo);
+    $('#fs-btn').classList.toggle('hidden', !showVideo && !hasReplay);
     $('#fs-btn').textContent = document.fullscreenElement ? '⤢ Exit full screen' : '⛶ Full screen';
     $('#live-hint').textContent = broadcasterActive
-      ? 'Keep this tab open while you broadcast.'
-      : owner && !rawEmbed ? 'Phone camera works over HTTPS or on localhost.'
-      : '';
+      ? 'Keep this tab open while you broadcast — the video is being recorded.'
+      : hasReplay && game.recording.duration
+        ? `Recorded ${Math.floor(game.recording.duration / 60)}:${String(game.recording.duration % 60).padStart(2, '0')} — the video stays here after the game.`
+        : hasReplay ? 'The recorded video stays here after the game.' : owner && !rawEmbed ? 'Phone camera works over HTTPS or on localhost.' : '';
 
     const bar = $('#stage-actbar');
     const showBar = owner && game.status !== 'final';
@@ -447,6 +485,73 @@ export async function renderGame(app, id) {
     return mutate(`/games/${encodeURIComponent(game.id)}/events`, { side, type, points: points ? Number(points) : undefined });
   }
 
+  // ------------------------------------------------------------- recording
+  function recordingMimeType() {
+    if (typeof MediaRecorder === 'undefined') return '';
+    const types = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
+    return types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+  }
+
+  /** Records what the camera sends, so the game keeps a video after the stream ends. */
+  function beginRecording(stream) {
+    const mimeType = recordingMimeType();
+    if (!mimeType) return;
+    try {
+      recordedChunks = [];
+      recordStartedAt = Date.now();
+      recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 1800000 });
+      recorder.ondataavailable = e => { if (e.data && e.data.size) recordedChunks.push(e.data); };
+      recorder.start(2000);
+    } catch {
+      recorder = null;
+    }
+  }
+
+  /** Stops the recorder and resolves once the last chunk has arrived. */
+  function finishRecording() {
+    const rec = recorder;
+    recorder = null;
+    if (!rec || rec.state === 'inactive') return Promise.resolve();
+    return new Promise(resolve => {
+      rec.addEventListener('stop', () => resolve(), { once: true });
+      try { rec.stop(); } catch { resolve(); }
+    });
+  }
+
+  /** Uploads the recording so viewers can replay the game later. */
+  async function saveRecording() {
+    if (!recordedChunks.length) return;
+    const blob = new Blob(recordedChunks, { type: recordedChunks[0].type || 'video/webm' });
+    recordedChunks = [];
+    if (blob.size < 1024) return;
+    const duration = recordStartedAt ? Math.round((Date.now() - recordStartedAt) / 1000) : '';
+    toast('Saving the recording…');
+    try {
+      const res = await fetch(`/api/games/${encodeURIComponent(game.id)}/recording?duration=${duration}`, {
+        method: 'PUT',
+        headers: { 'content-type': blob.type || 'video/webm' },
+        body: blob
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+      if (data.game) apply(data.game);
+      toast(`Recording saved (${Math.max(1, Math.round(blob.size / 1048576))} MB) — anyone can replay this game now`);
+    } catch (err) {
+      toast(`Could not save the recording: ${err.message}`, 'error');
+    }
+  }
+
+  // Last chance to keep the video if the tab is closed mid-broadcast.
+  const flushRecording = () => {
+    if (!recordedChunks.length) return;
+    const blob = new Blob(recordedChunks, { type: recordedChunks[0].type || 'video/webm' });
+    recordedChunks = [];
+    if (blob.size < 1024) return;
+    const duration = recordStartedAt ? Math.round((Date.now() - recordStartedAt) / 1000) : '';
+    navigator.sendBeacon(`/api/games/${encodeURIComponent(game.id)}/recording?duration=${duration}`, blob);
+  };
+  window.addEventListener('pagehide', flushRecording);
+
   // ------------------------------------------------------------- streaming
   async function startBroadcast() {
     const btn = $('#go-live-btn');
@@ -461,6 +566,7 @@ export async function renderGame(app, id) {
       broadcaster = new Broadcaster({ socket, stream, onPeer: () => {} });
       broadcasterActive = true;
       broadcaster.start();
+      beginRecording(stream);
       videoEl.srcObject = stream;
       videoEl.muted = true;
       videoEl.play().catch(() => {});
@@ -475,6 +581,7 @@ export async function renderGame(app, id) {
   }
 
   function stopBroadcast(sendOff = false) {
+    finishRecording().then(saveRecording);
     if (broadcaster) broadcaster.stop(sendOff);
     broadcaster = null;
     broadcasterActive = false;
@@ -697,6 +804,8 @@ export async function renderGame(app, id) {
     clearTimeout(bumpTimer);
     app.removeEventListener('click', onClick);
     document.removeEventListener('fullscreenchange', syncFsLabel);
+    finishRecording().then(saveRecording);
+    window.removeEventListener('pagehide', flushRecording);
     if (broadcaster) broadcaster.stop(true);
     if (viewer) viewer.stop();
     if (socket) socket.close();

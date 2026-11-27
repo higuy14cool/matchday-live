@@ -99,4 +99,4 @@ function clockElapsed(game, now = Date.now()) {
   return Math.max(0, (c.elapsedMs || 0) + running);
 }
 
-module.exports = { Store, newId, clockElapsed, DB_FILE };
+module.exports = { Store, newId, clockElapsed, DB_FILE, DATA_DIR };
