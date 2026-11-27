@@ -324,7 +324,7 @@ export async function renderGame(app, id) {
     embedBtn.textContent = rawEmbed ? 'Change embed link' : 'Embed a link';
     $('#stop-live-btn').classList.toggle('hidden', !broadcasterActive);
     $('#fs-btn').classList.toggle('hidden', !showVideo && !hasReplay);
-    $('#fs-btn').textContent = document.fullscreenElement ? '⤢ Exit full screen' : '⛶ Full screen';
+    $('#fs-btn').textContent = isFs() ? '⤢ Exit full screen' : '⛶ Full screen';
     $('#live-hint').textContent = broadcasterActive
       ? 'Keep this tab open while you broadcast — the video is being recorded.'
       : hasReplay && game.recording.duration
@@ -448,12 +448,40 @@ export async function renderGame(app, id) {
     </select>`;
   }
 
+  function stageVideo() {
+    // Whichever picture is on screen: the live camera stream or the replay.
+    return [videoEl, replayEl].find(v => v && !v.hidden) || stageEl.querySelector('video');
+  }
+  function inFullscreen() {
+    return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+
+  const screenFilled = () => stageEl.classList.contains('fill-screen');
+  function setScreenFill(on) {
+    stageEl.classList.toggle('fill-screen', on);
+    document.body.classList.toggle('stage-filling', on);
+    syncFsLabel();
+  }
+
   async function toggleFullscreen() {
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
     try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else if (stageEl.requestFullscreen) await stageEl.requestFullscreen();
-      else toast('This browser cannot put the video full screen', 'error');
+      if (screenFilled() && !fsEl) return setScreenFill(false);
+      if (fsEl) {
+        if (document.exitFullscreen) return await document.exitFullscreen();
+        if (document.webkitExitFullscreen) return document.webkitExitFullscreen();
+        return;
+      }
+      if (stageEl.requestFullscreen) return await stageEl.requestFullscreen();
+      if (stageEl.webkitRequestFullscreen) return stageEl.webkitRequestFullscreen();
+      // iPhone Safari cannot widen a page element, so the video fills the window instead
+      // and the scoreboard and referee buttons stay on top of it.
+      setScreenFill(true);
     } catch (err) {
+      if (err && err.name === 'NotAllowedError') {
+        setScreenFill(true);
+        return;
+      }
       toast(err.message || 'Full screen was blocked by the browser', 'error');
     }
   }
@@ -635,11 +663,21 @@ export async function renderGame(app, id) {
   }
 
   // -------------------------------------------------------------- handlers
+  const isFs = () => inFullscreen() || screenFilled();
   const syncFsLabel = () => {
+    if (inFullscreen()) {
+      stageEl.classList.remove('fill-screen');
+      document.body.classList.remove('stage-filling');
+    }
     const btn = $('#fs-btn');
-    if (btn) btn.textContent = document.fullscreenElement ? '⤢ Exit full screen' : '⛶ Full screen';
+    if (btn) btn.textContent = isFs() ? '⤢ Exit full screen' : '⛶ Full screen';
   };
   document.addEventListener('fullscreenchange', syncFsLabel);
+  document.addEventListener('webkitfullscreenchange', syncFsLabel);
+  const onKey = e => {
+    if (e.key === 'Escape' && screenFilled()) setScreenFill(false);
+  };
+  document.addEventListener('keydown', onKey);
 
   socket = new GameSocket(game.id);
   socket.on('status', () => renderInfo());
@@ -825,6 +863,9 @@ export async function renderGame(app, id) {
     clearTimeout(bumpTimer);
     app.removeEventListener('click', onClick);
     document.removeEventListener('fullscreenchange', syncFsLabel);
+    document.removeEventListener('webkitfullscreenchange', syncFsLabel);
+    document.removeEventListener('keydown', onKey);
+    setScreenFill(false);
     finishRecording().then(saveRecording);
     window.removeEventListener('pagehide', flushRecording);
     if (broadcaster) broadcaster.stop(true);

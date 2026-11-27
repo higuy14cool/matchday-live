@@ -567,9 +567,14 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 
 /* filming full screen: the video fills the screen, the referee bar stays on top */
 .stage:fullscreen,
-.stage:-webkit-full-screen {
+.stage:-webkit-full-screen,
+.stage.fill-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
   width: 100vw;
   height: 100vh;
+  margin: 0;
   max-width: none;
   aspect-ratio: auto;
   border: 0;
@@ -579,23 +584,30 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .stage:fullscreen video,
 .stage:fullscreen .stage-embed,
 .stage:-webkit-full-screen video,
-.stage:-webkit-full-screen .stage-embed {
+.stage:-webkit-full-screen .stage-embed,
+.stage.fill-screen video,
+.stage.fill-screen .stage-embed {
   width: 100%;
   height: 100%;
   object-fit: contain;
 }
 .stage:fullscreen .stage-actbar,
-.stage:-webkit-full-screen .stage-actbar {
+.stage:-webkit-full-screen .stage-actbar,
+.stage.fill-screen .stage-actbar {
   bottom: 18px;
   left: 18px;
   right: 18px;
 }
 .stage:fullscreen .rapid-btn,
-.stage:-webkit-full-screen .rapid-btn { font-size: 13px; padding: 10px 14px; }
+.stage:-webkit-full-screen .rapid-btn,
+.stage.fill-screen .rapid-btn { font-size: 13px; padding: 10px 14px; }
 .stage:fullscreen .stage-events,
-.stage:-webkit-full-screen .stage-events { top: auto; bottom: 96px; left: 18px; }
+.stage:-webkit-full-screen .stage-events,
+.stage.fill-screen .stage-events { top: auto; bottom: 96px; left: 18px; }
 .stage:fullscreen .stage-overlay,
-.stage:-webkit-full-screen .stage-overlay { left: 18px; top: 18px; bottom: auto; }
+.stage:-webkit-full-screen .stage-overlay,
+.stage.fill-screen .stage-overlay { left: 18px; top: 18px; bottom: auto; }
+body.stage-filling { overflow: hidden; }
 
 /* event strip on the big scoreboard */
 .board-screen { position: relative; }
