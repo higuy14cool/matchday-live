@@ -1,0 +1,61 @@
+'use strict';
+
+const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const ROOT = path.join(__dirname, '..');
+
+async function startServer(port) {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'matchday-test-'));
+  const child = spawn(process.execPath, ['server/index.js'], {
+    cwd: ROOT,
+    env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  let output = '';
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`server did not start: ${output}`)), 8000);
+    child.stdout.on('data', chunk => {
+      output += chunk;
+      if (output.includes('running on')) {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+    child.stderr.on('data', chunk => { output += chunk; });
+    child.on('exit', code => {
+      clearTimeout(timer);
+      reject(new Error(`server exited early (${code}): ${output}`));
+    });
+  });
+
+  return {
+    base: `http://127.0.0.1:${port}`,
+    ws: `ws://127.0.0.1:${port}/ws`,
+    async close() {
+      child.kill('SIGTERM');
+      await new Promise(resolve => child.once('exit', resolve));
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  };
+}
+
+async function json(base, method, urlPath, { body, key, raw } = {}) {
+  const headers = {};
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  if (key) headers['x-owner-key'] = key;
+  const res = await fetch(base + urlPath, {
+    method,
+    headers,
+    body: raw !== undefined ? raw : body !== undefined ? JSON.stringify(body) : undefined
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* html or empty */ }
+  return { status: res.status, data, text, type: res.headers.get('content-type') || '' };
+}
+
+module.exports = { startServer, json };
