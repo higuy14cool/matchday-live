@@ -2,19 +2,23 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, json } = require('./helpers');
+const { startServer, json, login, setDefaultCookie } = require('./helpers');
 
 const PORT = 4611;
 let srv;
 
-test.before(async () => { srv = await startServer(PORT); });
+test.before(async () => {
+  srv = await startServer(PORT);
+  const admin = await login(srv.base, 'higuy14/cool', 'favgame1');
+  assert.equal(admin.status, 200, 'the bootstrap admin can sign in');
+  setDefaultCookie(admin.cookie);
+});
 test.after(async () => { await srv.close(); });
 
 async function makeTournament(sport = 'soccer', name = 'Test Cup') {
   const res = await json(srv.base, 'POST', '/api/tournaments', { body: { name, sport } });
   assert.equal(res.status, 201);
-  assert.ok(res.data.ownerKey, 'creation returns the owner key once');
-  return { id: res.data.tournament.id, key: res.data.ownerKey, tournament: res.data.tournament };
+  return { id: res.data.tournament.id, tournament: res.data.tournament };
 }
 
 async function addTeams(t, names) {
@@ -35,25 +39,27 @@ test('health reports both sports', async () => {
   assert.deepEqual(res.data.sport.sort(), ['basketball', 'soccer']);
 });
 
-test('owner key is returned once and never exposed publicly', async () => {
+test('nothing hands out legacy owner keys', async () => {
   const t = await makeTournament('soccer', 'Key Cup');
   const list = await json(srv.base, 'GET', '/api/tournaments');
   const one = await json(srv.base, 'GET', `/api/tournaments/${t.id}`);
   for (const body of [list.text, one.text]) {
-    assert.ok(!body.includes(t.key), 'owner key must not appear in public payloads');
-    assert.ok(!body.includes('ownerHash'), 'owner hash must not appear either');
+    assert.ok(!body.includes('ownerKey'), 'no owner key in public payloads');
+    assert.ok(!body.includes('ownerHash'), 'no owner hash in public payloads');
   }
 });
 
-test('only the owner can change a tournament', async () => {
+test('writes need a signed-in admin', async () => {
   const t = await makeTournament();
-  const foreign = await json(srv.base, 'POST', `/api/tournaments/${t.id}/teams`, {
-    key: 'wrong-key', body: { name: 'Intruder FC' }
+  const anonTeam = await json(srv.base, 'POST', `/api/tournaments/${t.id}/teams`, {
+    anonymous: true, body: { name: 'Anon FC' }
   });
-  assert.equal(foreign.status, 403);
-  const missing = await json(srv.base, 'POST', `/api/tournaments/${t.id}/teams`, { body: { name: 'Anon FC' } });
-  assert.equal(missing.status, 403);
-  const ok = await json(srv.base, 'PATCH', `/api/tournaments/${t.id}`, { key: t.key, body: { name: 'Renamed Cup' } });
+  assert.equal(anonTeam.status, 401);
+  const anonRename = await json(srv.base, 'PATCH', `/api/tournaments/${t.id}`, {
+    anonymous: true, body: { name: 'Intruder FC' }
+  });
+  assert.equal(anonRename.status, 401);
+  const ok = await json(srv.base, 'PATCH', `/api/tournaments/${t.id}`, { body: { name: 'Renamed Cup' } });
   assert.equal(ok.status, 200);
   assert.equal(ok.data.tournament.name, 'Renamed Cup');
 });
@@ -146,7 +152,7 @@ test('knockout stages are limited to the chosen format and can be created by han
     }
   });
   assert.equal(res.status, 201);
-  const t = { id: res.data.tournament.id, key: res.data.ownerKey };
+  const t = { id: res.data.tournament.id };
   const teams = res.data.teams;
   const final = await json(srv.base, 'POST', `/api/tournaments/${t.id}/games`, {
     key: t.key,

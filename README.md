@@ -18,7 +18,9 @@ One small Node server, no build step, no database to install.
 - **Final scores** – enter the result and tick “This is the final score” to finish the game, stop the clock, and let the bracket fill the next round in one step.
 - **Big scoreboard** – a full-screen board (`#/g/<id>/board`) for a projector or a second screen, with a fullscreen button.
 - **Live video** – the organizer can go live from the phone camera (WebRTC, peer to peer) or embed a YouTube/Twitch link. The scoreboard overlays the video.
-- **Organizer keys** – whoever creates a tournament gets a private key stored in the browser. Only that browser can change scores, start streams or edit the tournament. Everyone else gets a read-only view.
+- **Accounts and roles** – the site asks you to sign in first. Admins create tournaments and games, record results, go live and manage accounts; viewers can only watch, read the stats and follow a live game.
+- **Referee bar while filming** – on a live game the admin gets a row of buttons under the video: VAR, yellow card, red card, second yellow → red, add a goal, subtract a goal. Each one asks who it is for (team and player, or a VAR description), then the call appears in the video's left corner for every viewer. Goals change only the scoreboard. Viewers never receive these buttons.
+- **Accounts page** (`#/users`) – the admin makes a username and password for each viewer, so they can sign in on their own computer; deleting an account signs that viewer out at once.
 
 ## Run it
 
@@ -41,9 +43,17 @@ Optional environment variables:
 
 Data lives in a single JSON file (`data/db.json`), written atomically and debounced. Back it up by copying that file.
 
+## Signing in
+
+The app opens on a sign-in page; nothing else is reachable without a session, and the WebSocket refuses anonymous listeners too.
+
+The first admin is created on first start from `ADMIN_USERNAME` / `ADMIN_PASSWORD`, defaulting to `higuy14/cool` / `favgame1` — change it with those variables before you expose the app. After that, add every viewer from **Accounts** in the header (or `POST /api/users`): username, password and role. Admins can also delete accounts and change their own password; a removed viewer loses their session immediately.
+
+Sessions are held in memory with an HttpOnly, SameSite=Lax cookie, so restarting the server signs everyone out. Passwords are hashed with scrypt and a per-user salt.
+
 ## Try the demo
 
-With no tournaments yet, the home page shows **Load demo data** (or call `POST /api/demo`). It seeds a basketball league and a soccer cup with teams, games and one live game each. The response contains the owner key for the demo tournaments; the browser stores it automatically when you use the button.
+With no tournaments yet, the home page shows **Load demo data** (admin only, or call `POST /api/demo`). It seeds a basketball league and a soccer cup with teams, games and one live game each.
 
 ## Live video notes
 
@@ -54,13 +64,23 @@ With no tournaments yet, the home page shows **Load demo data** (or call `POST /
 
 ## API at a glance
 
-All writes to a tournament or its games need the header `X-Owner-Key: <key>`.
+Reading needs any signed-in account. Every write needs an **admin** session; viewers get `403`. Sign in with `POST /api/auth/login` (`{"username","password"}`) and send the returned session cookie with later calls.
+
+| Method   | Path                    | Purpose                                |
+| -------- | ----------------------- | -------------------------------------- |
+| `POST`   | `/api/auth/login`       | sign in (rate limited)                  |
+| `POST`   | `/api/auth/logout`      | sign out                                |
+| `GET`    | `/api/auth/me`          | who am I                                |
+| `POST`   | `/api/auth/password`    | change your own password                |
+| `GET`    | `/api/users`            | list accounts (admin)                   |
+| `POST`   | `/api/users`            | create an account (admin)               |
+| `DELETE` | `/api/users/:id`        | remove an account (admin)               |
 
 | Method   | Path                                   | Purpose                          |
 | -------- | -------------------------------------- | -------------------------------- |
 | `GET`    | `/api/health`                          | status + supported sports        |
 | `GET`    | `/api/tournaments`                     | list tournaments                 |
-| `POST`   | `/api/tournaments`                     | create with teams + format (returns `ownerKey` once) |
+| `POST`   | `/api/tournaments`                     | create with teams + format (admin) |
 | `POST`   | `/api/quick-games`                     | create a standalone two-team game |
 | `GET`    | `/api/quick-games`                     | recent quick games               |
 | `GET`    | `/api/tournaments/:id`                 | tournament, teams, games         |
@@ -71,7 +91,7 @@ All writes to a tournament or its games need the header `X-Owner-Key: <key>`.
 | `POST`   | `/api/tournaments/:id/games`           | create a game (scheduled or live) |
 | `GET`    | `/api/live`                            | games currently in play          |
 | `GET`    | `/api/games/:id`                       | game + teams                     |
-| `POST`   | `/api/games/:id/events`                | goal / score / card / foul       |
+| `POST`   | `/api/games/:id/events`                | goal / minus_goal / score / card / VAR / foul |
 | `PATCH`  | `/api/games/:id`                       | change teams, venue or status    |
 | `POST`   | `/api/games/:id/undo`                  | undo last event                  |
 | `POST`   | `/api/games/:id/score`                 | set the score outright           |
@@ -117,6 +137,7 @@ test/     node:test suites for the REST API and the live layer
 
 ## Known limits
 
-- Scores, clocks and keys are trusted to the organizer's browser; there is no user account system.
+- Sessions live in memory: a restart signs everyone out (accounts themselves persist in `db.json`).
+- Anyone with an admin account can change any tournament; there is no per-tournament ownership.
 - The JSON store is single-process; it is fine for a club or a school, not for a fleet of servers.
 - Camera streams are peer to peer, so a very large audience needs an embedded stream or an SFU.

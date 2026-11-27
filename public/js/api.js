@@ -1,42 +1,26 @@
-const KEY_STORAGE = 'matchday.ownerKeys.v1';
+let currentUser = null;
+let unauthorizedHandler = null;
 
-function readKeys() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(KEY_STORAGE) || '{}');
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
+export function setUser(user) {
+  currentUser = user || null;
 }
 
-function writeKeys(keys) {
-  try {
-    localStorage.setItem(KEY_STORAGE, JSON.stringify(keys));
-  } catch {
-    /* storage can be unavailable in private modes */
-  }
+export function getUser() {
+  return currentUser;
 }
 
-export function getOwnerKey(tournamentId) {
-  return readKeys()[tournamentId] || '';
+/** Admins run the competition; viewers only watch. */
+export function canEdit() {
+  return Boolean(currentUser && currentUser.role === 'admin');
 }
 
-export function setOwnerKey(tournamentId, key) {
-  const keys = readKeys();
-  keys[tournamentId] = key;
-  writeKeys(keys);
+export function setUnauthorizedHandler(fn) {
+  unauthorizedHandler = fn;
 }
 
-export function forgetOwnerKey(tournamentId) {
-  const keys = readKeys();
-  delete keys[tournamentId];
-  writeKeys(keys);
-}
-
-async function request(path, { method = 'GET', body, key } = {}) {
+async function request(path, { method = 'GET', body, quiet401 = false } = {}) {
   const headers = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
-  if (key) headers['X-Owner-Key'] = key;
   let res;
   try {
     res = await fetch(`/api${path}`, {
@@ -54,6 +38,10 @@ async function request(path, { method = 'GET', body, key } = {}) {
     data = null;
   }
   if (!res.ok) {
+    if (res.status === 401 && !quiet401 && unauthorizedHandler) {
+      setUser(null);
+      unauthorizedHandler();
+    }
     const err = new Error((data && data.error) || `Request failed (${res.status})`);
     err.status = res.status;
     throw err;
@@ -63,7 +51,23 @@ async function request(path, { method = 'GET', body, key } = {}) {
 
 export const api = {
   get: (path) => request(path),
-  post: (path, body, key) => request(path, { method: 'POST', body, key }),
-  patch: (path, body, key) => request(path, { method: 'PATCH', body, key }),
-  del: (path, key) => request(path, { method: 'DELETE', key })
+  post: (path, body) => request(path, { method: 'POST', body }),
+  patch: (path, body) => request(path, { method: 'PATCH', body }),
+  del: (path) => request(path, { method: 'DELETE' }),
+  login: (username, password) => request('/auth/login', { method: 'POST', body: { username, password }, quiet401: true }),
+  logout: () => request('/auth/logout', { method: 'POST', body: {}, quiet401: true }),
+  me: async () => {
+    try {
+      return await request('/auth/me', { quiet401: true });
+    } catch (err) {
+      if (err.status === 401) return null;
+      throw err;
+    }
+  },
+  users: {
+    list: () => request('/users'),
+    create: (body) => request('/users', { method: 'POST', body }),
+    remove: (id) => request(`/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    setPassword: (current, password) => request('/auth/password', { method: 'POST', body: { current, password } })
+  }
 };

@@ -1,9 +1,9 @@
 'use strict';
 
 const express = require('express');
-const { newId, makeOwnerKey, hashKey } = require('./store');
+const { newId } = require('./store');
 const { publicTournament, publicTeam, publicGame, newGame, SPORTS } = require('./gameplay');
-const { ensureOwner, bad, str, color, optionalDate } = require('./api-helpers');
+const { ensureAdmin, bad, str, color, optionalDate } = require('./api-helpers');
 const { createGamesApi } = require('./games-api');
 const { seedDemo } = require('./demo');
 const { normalizeFormat, stagesFor, stageLabel, buildGroupFixtures } = require('./format');
@@ -12,9 +12,11 @@ const MAX_TEAMS = 80;
 const MAX_GAMES = 2000;
 const TEAM_COLORS = ['#9ae64b', '#4cc9f0', '#ff9f45', '#ff5d8f', '#b28dff', '#f4d35e', '#5ee0b5', '#ff8f6b'];
 
-function createApi({ store, hub }) {
+function createApi({ store, hub, auth }) {
   const router = express.Router();
   router.use(express.json({ limit: '96kb' }));
+  // Everything below needs a signed-in account; /health stays public.
+  router.use((req, res, next) => (req.path === '/health' ? next() : auth.requireUser(req, res, next)));
 
   const pushGame = game => hub.broadcastGame(publicGame(game));
 
@@ -118,6 +120,7 @@ function createApi({ store, hub }) {
   });
 
   router.post('/tournaments', (req, res) => {
+    if (!ensureAdmin(req, res)) return;
     const body = req.body || {};
     const name = str(body.name, 60);
     const sport = body.sport;
@@ -137,13 +140,11 @@ function createApi({ store, hub }) {
       format = { groups: 1, groupStage: 'single', knockout: 'none', advancePerGroup: 2 };
     }
 
-    const key = makeOwnerKey();
     const tournament = {
       id: uniqueId('tr', id => Boolean(store.tournament(id))),
       name,
       sport,
       format,
-      ownerHash: hashKey(key),
       createdAt: Date.now()
     };
     const teams = buildTeams(tournament, teamNames, parsedTeams.groups);
@@ -167,7 +168,6 @@ function createApi({ store, hub }) {
 
     res.status(201).json({
       tournament: publicTournament(tournament),
-      ownerKey: key,
       teams: teams.map(publicTeam),
       games: games.map(publicGame)
     });
@@ -182,7 +182,7 @@ function createApi({ store, hub }) {
   router.patch('/tournaments/:id', (req, res) => {
     const t = store.tournament(req.params.id);
     if (!t) return bad(res, 'Tournament not found', 404);
-    if (!ensureOwner(t, req, res)) return;
+    if (!ensureAdmin(req, res)) return;
     if (req.body && req.body.name !== undefined) {
       const name = str(req.body.name, 60);
       if (!name) return bad(res, 'Name cannot be empty');
@@ -195,7 +195,7 @@ function createApi({ store, hub }) {
   router.delete('/tournaments/:id', (req, res) => {
     const t = store.tournament(req.params.id);
     if (!t) return bad(res, 'Tournament not found', 404);
-    if (!ensureOwner(t, req, res)) return;
+    if (!ensureAdmin(req, res)) return;
     store.data.games = store.games.filter(g => g.tournamentId !== t.id);
     store.data.teams = store.teams.filter(x => x.tournamentId !== t.id);
     store.remove('tournaments', t.id);
@@ -206,7 +206,7 @@ function createApi({ store, hub }) {
   router.post('/tournaments/:id/teams', (req, res) => {
     const t = store.tournament(req.params.id);
     if (!t) return bad(res, 'Tournament not found', 404);
-    if (!ensureOwner(t, req, res)) return;
+    if (!ensureAdmin(req, res)) return;
     const name = str(req.body && req.body.name, 40);
     if (!name) return bad(res, 'Give the team a name');
     if (store.teamsOf(t.id).length >= MAX_TEAMS) return bad(res, `A tournament holds up to ${MAX_TEAMS} teams`);
@@ -227,7 +227,7 @@ function createApi({ store, hub }) {
     const team = store.team(req.params.id);
     if (!team) return bad(res, 'Team not found', 404);
     const t = store.tournament(team.tournamentId);
-    if (!ensureOwner(t, req, res)) return;
+    if (!ensureAdmin(req, res)) return;
     if (req.body.name !== undefined) {
       const name = str(req.body.name, 40);
       if (!name) return bad(res, 'Team name cannot be empty');
@@ -243,7 +243,7 @@ function createApi({ store, hub }) {
     const team = store.team(req.params.id);
     if (!team) return bad(res, 'Team not found', 404);
     const t = store.tournament(team.tournamentId);
-    if (!ensureOwner(t, req, res)) return;
+    if (!ensureAdmin(req, res)) return;
     const used = store.games.some(g => g.homeTeamId === team.id || g.awayTeamId === team.id);
     if (used) return bad(res, 'This team already has games. Delete those games first.', 409);
     store.remove('teams', team.id);
@@ -254,7 +254,7 @@ function createApi({ store, hub }) {
   router.post('/tournaments/:id/games', (req, res) => {
     const t = store.tournament(req.params.id);
     if (!t) return bad(res, 'Tournament not found', 404);
-    if (!ensureOwner(t, req, res)) return;
+    if (!ensureAdmin(req, res)) return;
 
     const home = store.team(req.body && req.body.homeTeamId);
     const away = store.team(req.body && req.body.awayTeamId);
@@ -300,7 +300,7 @@ function createApi({ store, hub }) {
   router.post('/tournaments/:id/fixtures', (req, res) => {
     const t = store.tournament(req.params.id);
     if (!t) return bad(res, 'Tournament not found', 404);
-    if (!ensureOwner(t, req, res)) return;
+    if (!ensureAdmin(req, res)) return;
 
     const teams = store.teamsOf(t.id);
     if (teams.length < 2) return bad(res, 'Add at least two teams first');
@@ -347,6 +347,7 @@ function createApi({ store, hub }) {
 
   // ------------------------------------------------------------ quick games
   router.post('/quick-games', (req, res) => {
+    if (!ensureAdmin(req, res)) return;
     const body = req.body || {};
     const sport = body.sport;
     const homeName = str(body.homeName, 40);
@@ -356,14 +357,12 @@ function createApi({ store, hub }) {
     if (homeName.toLowerCase() === awayName.toLowerCase()) return bad(res, 'Pick two different teams');
     if (body.live !== undefined && typeof body.live !== 'boolean') return bad(res, 'live must be true or false');
 
-    const key = makeOwnerKey();
     const tournament = {
       id: uniqueId('tr', id => Boolean(store.tournament(id))),
       name: `${homeName} vs ${awayName}`,
       sport,
       format: null,
       quick: true,
-      ownerHash: hashKey(key),
       createdAt: Date.now()
     };
     const teams = buildTeams(tournament, [homeName, awayName]);
@@ -388,7 +387,6 @@ function createApi({ store, hub }) {
     store.insert('games', game);
     res.status(201).json({
       tournament: publicTournament(tournament),
-      ownerKey: key,
       teams: teams.map(publicTeam),
       game: publicGame(game)
     });
@@ -415,6 +413,7 @@ function createApi({ store, hub }) {
 
   // ----------------------------------------------------------------- demo
   router.post('/demo', (req, res) => {
+    if (!ensureAdmin(req, res)) return;
     if (store.tournaments.length >= 40) return bad(res, 'Demo limit reached', 409);
     const created = seedDemo(store);
     res.status(201).json({ created });

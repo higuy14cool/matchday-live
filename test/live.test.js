@@ -3,17 +3,23 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const WebSocket = require('ws');
-const { startServer, json } = require('./helpers');
+const { startServer, json, login, setDefaultCookie } = require('./helpers');
 
 const PORT = 4612;
 let srv;
+let wsCookie = null;
 
-test.before(async () => { srv = await startServer(PORT); });
+test.before(async () => {
+  srv = await startServer(PORT);
+  const admin = await login(srv.base, 'higuy14/cool', 'favgame1');
+  setDefaultCookie(admin.cookie);
+  wsCookie = admin.cookie;
+});
 test.after(async () => { await srv.close(); });
 
 class Client {
-  constructor(url) {
-    this.ws = new WebSocket(url);
+  constructor(url, cookie = wsCookie) {
+    this.ws = new WebSocket(url, cookie ? { headers: { cookie } } : {});
     this.messages = [];
     this.waiters = [];
     this.ws.on('message', raw => {
@@ -56,7 +62,7 @@ class Client {
 async function seedGame() {
   const t = await json(srv.base, 'POST', '/api/tournaments', { body: { name: 'Live Cup', sport: 'basketball' } });
   const id = t.data.tournament.id;
-  const key = t.data.ownerKey;
+  const key = undefined;
   const team = async name => (await json(srv.base, 'POST', `/api/tournaments/${id}/teams`, { key, body: { name } })).data.team;
   const home = await team('Home Hoops');
   const away = await team('Away Hoops');
@@ -65,6 +71,15 @@ async function seedGame() {
   });
   return { tournamentId: id, key, gameId: game.data.game.id };
 }
+
+test('a socket without a session is closed with 1008', async () => {
+  const anon = new WebSocket(srv.ws, {});
+  const code = await new Promise(resolve => {
+    anon.on('close', c => resolve(c));
+    anon.on('error', () => {});
+  });
+  assert.equal(code, 1008);
+});
 
 test('viewers see live score updates pushed over the socket', async () => {
   const { gameId, key } = await seedGame();

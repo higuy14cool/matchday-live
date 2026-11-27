@@ -1,5 +1,4 @@
-import { api } from '../api.js';
-import { setOwnerKey } from '../api.js';
+import { api, canEdit } from '../api.js';
 import { toast } from '../ui.js';
 import { openNewTournament, openQuickGame } from './forms.js';
 import { liveCard, tournamentCard } from '../components.js';
@@ -106,10 +105,7 @@ function tournamentsSection(tournaments) {
 async function loadDemo() {
   const res = await api.post('/demo');
   const created = res.created || [];
-  for (const row of created) {
-    if (row.ownerKey && row.tournament) setOwnerKey(row.tournament.id, row.ownerKey);
-  }
-  toast('Demo tournaments loaded — you own them on this device');
+  toast('Demo tournaments loaded');
   const first = created.find(row => row.tournament && row.tournament.sport === 'soccer') || created[0];
   if (first && first.tournament) location.hash = `#/t/${first.tournament.id}`;
   else location.reload();
@@ -138,6 +134,11 @@ export async function renderHome(app, { liveOnly = false } = {}) {
     `;
   } else {
     app.innerHTML = hero(tournaments, live, gameCount) + liveSection(live) + quickSection(quick) + tournamentsSection(tournaments);
+  }
+
+  if (!canEdit()) {
+    // Viewers get a clean, read-only page: no create, no demo seeding.
+    app.querySelectorAll('[data-act="new-tournament"], [data-act="quick-game"], [data-act="demo"]').forEach(el => el.remove());
   }
 
   app.querySelectorAll('[data-act="new-tournament"]').forEach(btn => btn.addEventListener('click', openNewTournament));

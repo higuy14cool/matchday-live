@@ -8,9 +8,14 @@ const SPORTS = {
 };
 
 const SCORE_EVENTS = {
-  soccer: new Set(['goal', 'own_goal']),
+  soccer: new Set(['goal', 'own_goal', 'minus_goal']),
   basketball: new Set(['score'])
 };
+
+// Referee actions the scorer can send during a live match. Cards and VAR are
+// soccer, fouls and timeouts are basketball.
+const CARD_EVENTS = new Set(['yellow', 'red', 'yellow_red']);
+const OTHER_EVENTS = new Set(['foul', 'timeout', 'sub', 'var']);
 
 // What the browser sees. Owner keys never leave the server.
 function publicTournament(t) {
@@ -89,7 +94,7 @@ function applyEvent(game, input) {
   const { side, type, player } = input;
   if (side !== 'home' && side !== 'away') return 'side must be home or away';
   if (!SCORE_EVENTS[game.sport]) return 'Unknown sport';
-  if (!SCORE_EVENTS[game.sport].has(type) && !['foul', 'yellow', 'red', 'timeout', 'sub'].includes(type)) {
+  if (!SCORE_EVENTS[game.sport].has(type) && !CARD_EVENTS.has(type) && !OTHER_EVENTS.has(type)) {
     return 'Unknown event type for this sport';
   }
   if (game.status === 'final') return 'Game is finished — reopen it to make changes';
@@ -98,7 +103,8 @@ function applyEvent(game, input) {
     id: newId('ev'),
     side,
     type,
-    player: typeof player === 'string' ? player.slice(0, 40) : '',
+    player: typeof player === 'string' ? player.trim().slice(0, 40) : '',
+    note: typeof input.note === 'string' ? input.note.trim().slice(0, 160) : '',
     period: game.clock.period,
     clockMs: clockElapsed(game),
     at: Date.now(),
@@ -107,6 +113,12 @@ function applyEvent(game, input) {
 
   if (type === 'goal') event.scoreEffect[side] = 1;
   if (type === 'own_goal') event.scoreEffect[otherSide(side)] = 1;
+  // A removed goal can never push a score below zero, and the stored delta is
+  // the one that actually applied so undo stays exact.
+  if (type === 'minus_goal') {
+    if (game.score[side] < 1) return 'That team has no goal to remove';
+    event.scoreEffect[side] = -1;
+  }
   if (type === 'score') {
     const points = Number(input.points);
     if (![1, 2, 3].includes(points)) return 'points must be 1, 2 or 3';
@@ -116,9 +128,14 @@ function applyEvent(game, input) {
   if (type === 'foul' || type === 'timeout') {
     if (game.sport !== 'basketball') return `${type} is a basketball stat`;
   }
-  if (type === 'yellow' || type === 'red') {
+  if (CARD_EVENTS.has(type)) {
     if (game.sport !== 'soccer') return 'Cards are a soccer stat';
+    if (!event.player) return 'Say which player the card is for';
   }
+  if (type === 'var') {
+    if (!event.note) return 'Describe what was reviewed';
+  }
+  if (type === 'minus_goal' && game.sport !== 'soccer') return 'minus_goal is a soccer stat';
 
   game.score.home += event.scoreEffect.home;
   game.score.away += event.scoreEffect.away;

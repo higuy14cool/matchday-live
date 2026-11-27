@@ -2,12 +2,16 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, json } = require('./helpers');
+const { startServer, json, login, setDefaultCookie } = require('./helpers');
 
 const PORT = 4613;
 let srv;
 
-test.before(async () => { srv = await startServer(PORT); });
+test.before(async () => {
+  srv = await startServer(PORT);
+  const admin = await login(srv.base, 'higuy14/cool', 'favgame1');
+  setDefaultCookie(admin.cookie);
+});
 test.after(async () => { await srv.close(); });
 
 async function createTournament(body) {

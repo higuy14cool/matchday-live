@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
-const EMPTY = { version: 1, tournaments: [], teams: [], games: [] };
+const EMPTY = { version: 1, users: [], tournaments: [], teams: [], games: [] };
 
 class Store {
   constructor() {
@@ -22,6 +22,7 @@ class Store {
       const parsed = JSON.parse(raw);
       return {
         version: 1,
+        users: Array.isArray(parsed.users) ? parsed.users : [],
         tournaments: Array.isArray(parsed.tournaments) ? parsed.tournaments : [],
         teams: Array.isArray(parsed.teams) ? parsed.teams : [],
         games: Array.isArray(parsed.games) ? parsed.games : []
@@ -52,9 +53,16 @@ class Store {
     fs.renameSync(tmp, DB_FILE);
   }
 
+  get users() { return this.data.users; }
   get tournaments() { return this.data.tournaments; }
   get teams() { return this.data.teams; }
   get games() { return this.data.games; }
+
+  user(id) { return this.data.users.find(u => u.id === id); }
+  userByName(username) {
+    const key = String(username || '').toLowerCase();
+    return this.data.users.find(u => u.username.toLowerCase() === key);
+  }
 
   tournament(id) { return this.data.tournaments.find(t => t.id === id); }
   team(id) { return this.data.teams.find(t => t.id === id); }
@@ -83,21 +91,6 @@ function newId(prefix) {
   return `${prefix}_${crypto.randomBytes(5).toString('hex')}`;
 }
 
-function makeOwnerKey() {
-  return crypto.randomBytes(16).toString('hex');
-}
-
-function hashKey(key) {
-  return crypto.createHash('sha256').update(String(key)).digest('hex');
-}
-
-function checkOwner(tournament, key) {
-  if (!tournament || !tournament.ownerHash || !key) return false;
-  const given = Buffer.from(hashKey(key), 'hex');
-  const expected = Buffer.from(tournament.ownerHash, 'hex');
-  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
-}
-
 // Elapsed time in the current period, including time spent running.
 function clockElapsed(game, now = Date.now()) {
   const c = game.clock;
@@ -106,4 +99,4 @@ function clockElapsed(game, now = Date.now()) {
   return Math.max(0, (c.elapsedMs || 0) + running);
 }
 
-module.exports = { Store, newId, makeOwnerKey, hashKey, checkOwner, clockElapsed, DB_FILE };
+module.exports = { Store, newId, clockElapsed, DB_FILE };

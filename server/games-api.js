@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { publicGame, publicTeam, publicTournament, applyEvent, undoLast, clockAction, endGame } = require('./gameplay');
-const { ensureOwner, bad, str, optionalDate, httpUrl } = require('./api-helpers');
+const { ensureAdmin, bad, str, optionalDate, httpUrl } = require('./api-helpers');
 const { newId } = require('./store');
 const { advanceTournament } = require('./bracket');
 
@@ -35,7 +35,7 @@ function createGamesApi({ store, hub, pushGame }) {
       bad(res, 'Tournament not found', 404);
       return null;
     }
-    if (!ensureOwner(tournament, req, res)) return null;
+    if (!ensureAdmin(req, res)) return null;
     return { game, tournament };
   }
 
@@ -138,7 +138,8 @@ function createGamesApi({ store, hub, pushGame }) {
       type: body.type,
       side: body.side,
       points: body.points,
-      player: body.player
+      player: body.player,
+      note: body.note
     });
     if (error) return bad(res, error);
     store.save();

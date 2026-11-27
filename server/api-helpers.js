@@ -1,18 +1,10 @@
 'use strict';
 
-const { checkOwner } = require('./store');
-
-function ownerKey(req) {
-  return req.get('x-owner-key') || '';
-}
-
-/** Answers 403 itself when the key is wrong; returns true when the caller may act. */
-function ensureOwner(tournament, req, res) {
-  if (!checkOwner(tournament, ownerKey(req))) {
-    res.status(403).json({ error: 'This action needs the tournament owner key' });
-    return false;
-  }
-  return true;
+/** Answers 403 itself when the caller is not an admin; true when they may act. */
+function ensureAdmin(req, res) {
+  if (req.user && req.user.role === 'admin') return true;
+  res.status(req.user ? 403 : 401).json({ error: req.user ? 'Only an admin can do that' : 'Please sign in' });
+  return false;
 }
 
 function bad(res, message, status = 400) {
@@ -45,4 +37,4 @@ function httpUrl(value) {
   }
 }
 
-module.exports = { ownerKey, ensureOwner, bad, str, color, optionalDate, httpUrl };
+module.exports = { ensureAdmin, bad, str, color, optionalDate, httpUrl };

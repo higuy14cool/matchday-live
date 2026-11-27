@@ -10,7 +10,7 @@ function send(ws, payload) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
 }
 
-function createLiveHub(store) {
+function createLiveHub(store, { auth } = {}) {
   const connections = new Map(); // connId -> conn
   const rooms = new Map();       // gameId -> Set<connId>
   const onAir = new Map();       // gameId -> connId of broadcaster
@@ -151,6 +151,11 @@ function createLiveHub(store) {
     wss = new WebSocketServer({ server, path: '/ws', maxPayload: MAX_MESSAGE_BYTES });
 
     wss.on('connection', (ws, req) => {
+      // Scores stream to signed-in viewers only.
+      if (auth && !auth.sessionUser(req)) {
+        ws.close(1008, 'Please sign in');
+        return;
+      }
       // Reject connections from other origins only when explicitly configured.
       const allowed = process.env.ALLOWED_ORIGIN;
       if (allowed && req.headers.origin && req.headers.origin !== allowed) {

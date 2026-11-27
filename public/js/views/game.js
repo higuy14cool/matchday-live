@@ -1,6 +1,6 @@
-import { api, getOwnerKey } from '../api.js';
+import { api, canEdit } from '../api.js';
 import { toast, confirmDialog, showFormModal, copyText } from '../ui.js';
-import { esc, colorOf, clockState, periodLabel, embedUrl, SPORT_LABEL } from '../util.js';
+import { esc, colorOf, clockState, periodLabel, embedUrl, SPORT_LABEL, eventLabel, OVERLAY_EVENTS } from '../util.js';
 import { feedItem, sportPill, statusPill } from '../components.js';
 import { GameSocket, Broadcaster, Viewer, getCamera } from '../live.js';
 import { openStreamLink } from './forms.js';
@@ -75,6 +75,19 @@ function controlsHTML(game, home, away) {
     </div>`;
 }
 
+const RAPID_ACTIONS = [
+  { type: 'var', label: 'VAR', title: 'VAR review' },
+  { type: 'yellow', label: '🟨 Yellow', title: 'Yellow card' },
+  { type: 'red', label: '🟥 Red', title: 'Red card' },
+  { type: 'yellow_red', label: '🟨🟥 → Red', title: 'Second yellow → red' },
+  { type: 'goal', label: '＋ Goal', title: 'Goal' },
+  { type: 'minus_goal', label: '－ Goal', title: 'Remove a goal' }
+];
+
+function rapidBarHTML() {
+  return RAPID_ACTIONS.map(a => `<button type="button" class="rapid-btn ${a.type}" data-rapid="${a.type}" title="${esc(a.title)}">${a.label}</button>`).join('');
+}
+
 function stageHTML() {
   return `
     <div class="stage" id="stage">
@@ -86,6 +99,8 @@ function stageHTML() {
         <span class="stage-badge hidden" id="stage-viewers"></span>
       </div>
       <div class="stage-overlay hidden" id="stage-overlay"></div>
+      <div class="stage-events" id="stage-events" hidden></div>
+      <div class="stage-actbar hidden" id="stage-actbar"></div>
     </div>`;
 }
 
@@ -93,7 +108,7 @@ export async function renderGame(app, id) {
   let data = await api.get(`/games/${encodeURIComponent(id)}`);
   let game = data.game;
   let syncedAt = Date.now();
-  let owner = Boolean(getOwnerKey(game.tournamentId));
+  let owner = canEdit();
   let prevScore = { ...game.score };
 
   let socket = null;
@@ -165,6 +180,12 @@ export async function renderGame(app, id) {
   const overlayEl = $('#stage-overlay');
   const liveBadge = $('#stage-live-badge');
   const viewersEl = $('#stage-viewers');
+  const stageEl = $('#stage');
+  stageEl.addEventListener('click', e => {
+    const btn = e.target.closest('[data-rapid]');
+    if (!btn || !owner) return;
+    openRapidAction(btn.dataset.rapid);
+  });
 
   // ------------------------------------------------------------- rendering
   function renderHead() {
@@ -244,6 +265,12 @@ export async function renderGame(app, id) {
       ? 'Keep this tab open while you broadcast.'
       : owner && !rawEmbed ? 'Phone camera works over HTTPS or on localhost.'
       : '';
+
+    const bar = $('#stage-actbar');
+    const showBar = owner && game.status !== 'final';
+    bar.classList.toggle('hidden', !showBar);
+    bar.innerHTML = showBar ? rapidBarHTML() : '';
+    renderStageEvents();
   }
 
   function renderInfo() {
@@ -256,6 +283,85 @@ export async function renderGame(app, id) {
         ${game.venue ? `<div class="spread"><span class="muted">Venue</span><span>${esc(game.venue)}</span></div>` : ''}
         <div class="spread"><span class="muted">Updates</span><span>Live${socket && socket.connected ? ' · connected' : ''}</span></div>
       </div>`;
+  }
+
+  let lastShownEventId = null;
+
+  /** Left corner of the video: the referee calls and score changes everyone can see. */
+  function renderStageEvents() {
+    const el = $('#stage-events');
+    if (!el) return;
+    const seen = (game.events || []).filter(ev => OVERLAY_EVENTS.has(ev.type)).slice(-3).reverse();
+    const visible = seen.length > 0 && stageState !== 'embed' && game.status !== 'scheduled';
+    el.hidden = !visible;
+    if (!visible) {
+      el.innerHTML = '';
+      return;
+    }
+    const newestId = seen[0].id;
+    el.innerHTML = seen
+      .map(ev => {
+        const info = eventLabel(ev, data.home, data.away, game.sport);
+        return `<div class="stage-ev${ev.id === newestId && newestId !== lastShownEventId ? ' pop' : ''}">
+          <span class="sev-icon">${info.icon}</span><span class="sev-text">${info.html}</span>
+        </div>`;
+      })
+      .join('');
+    lastShownEventId = newestId;
+  }
+
+  /** Admin-only referee buttons: each one asks who it was for, then shows on the viewer's video. */
+  function openRapidAction(type) {
+    if (!owner) return;
+    if (type === 'var') {
+      showFormModal({
+        title: 'VAR review',
+        submitLabel: 'Show on video',
+        bodyHTML: `
+          <label class="field"><span>Team</span>${teamSelectHTML()}</label>
+          <label class="field"><span>What was reviewed?</span>
+            <textarea class="input" name="note" rows="3" maxlength="160" required placeholder="e.g. Possible offside before the goal"></textarea>
+          </label>`,
+        onSubmit: async fields => {
+          const note = (fields.note || '').trim();
+          if (!note) throw new Error('Describe what was reviewed');
+          await sendRapid({ side: fields.side, type, note });
+        }
+      });
+      return;
+    }
+
+    const cards = { yellow: 'yellow card', red: 'red card', yellow_red: 'second yellow → red' };
+    const isCard = Boolean(cards[type]);
+    const title = type === 'goal' ? 'Who scored?' : type === 'minus_goal' ? 'Which goal should be removed?' : `Who gets the ${cards[type]}?`;
+    showFormModal({
+      title,
+      submitLabel: 'Confirm',
+      bodyHTML: `
+        <label class="field"><span>Team</span>${teamSelectHTML()}</label>
+        <label class="field"><span>Player${isCard ? '' : ' <span class="tiny muted">(optional)</span>'}</span>
+          <input class="input" name="player" maxlength="40" ${isCard ? 'required' : ''} placeholder="e.g. J. Smith" autocomplete="off" />
+        </label>`,
+      onSubmit: async fields => {
+        const player = (fields.player || '').trim();
+        if (isCard && !player) throw new Error('Name the player the card is for');
+        await sendRapid({ side: fields.side, type, player: player || undefined });
+      }
+    });
+  }
+
+  function teamSelectHTML() {
+    return `<select class="input" name="side">
+      <option value="home">${esc(data.home.name)}</option>
+      <option value="away">${esc(data.away.name)}</option>
+    </select>`;
+  }
+
+  async function sendRapid(body) {
+    const res = await mutate(`/games/${encodeURIComponent(game.id)}/events`, body);
+    if (!res) return false; // keep the dialog open so the admin can retry
+    if (res.game) toast(body.type === 'goal' ? 'Goal added' : body.type === 'minus_goal' ? 'Goal removed' : 'Shown to viewers');
+    return true;
   }
 
   function apply(nextGame, fromSocket = false) {
@@ -285,8 +391,8 @@ export async function renderGame(app, id) {
   async function mutate(path, body, method = 'post') {
     try {
       const res = method === 'patch'
-        ? await api.patch(path, body, getOwnerKey(game.tournamentId))
-        : await api.post(path, body, getOwnerKey(game.tournamentId));
+        ? await api.patch(path, body)
+        : await api.post(path, body);
       if (res && res.game) apply(res.game);
       return res;
     } catch (err) {
@@ -450,7 +556,7 @@ export async function renderGame(app, id) {
             home: Number(fields.home),
             away: Number(fields.away),
             final
-          }, getOwnerKey(game.tournamentId));
+          });
           if (res && res.game) apply(res.game);
           toast(final ? 'Final score saved' : 'Score saved');
         }
@@ -478,7 +584,7 @@ export async function renderGame(app, id) {
           const res = await api.patch(`/games/${encodeURIComponent(game.id)}`, {
             homeTeamId: fields.home,
             awayTeamId: fields.away
-          }, getOwnerKey(game.tournamentId));
+          });
           if (res && res.home) data.home = res.home;
           if (res && res.away) data.away = res.away;
           if (res && res.game) apply(res.game);

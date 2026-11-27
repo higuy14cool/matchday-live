@@ -1,17 +1,15 @@
 'use strict';
 
-const { newId, makeOwnerKey, hashKey } = require('./store');
+const { newId } = require('./store');
 const { newGame, publicGame } = require('./gameplay');
 
 const MIN = 60 * 1000;
 
 function build(store, { name, sport, teams, games }) {
-  const key = makeOwnerKey();
   const tournament = {
     id: newId('tr'),
     name,
     sport,
-    ownerHash: hashKey(key),
     createdAt: Date.now() - Math.floor(Math.random() * 86400000)
   };
   store.insert('tournaments', tournament);
@@ -52,7 +50,7 @@ function build(store, { name, sport, teams, games }) {
     store.insert('games', game);
   }
 
-  return { tournament: { id: tournament.id, name, sport }, ownerKey: key, games: store.gamesOf(tournament.id).map(publicGame) };
+  return { tournament: { id: tournament.id, name, sport }, games: store.gamesOf(tournament.id).map(publicGame) };
 }
 
 function seedDemo(store) {

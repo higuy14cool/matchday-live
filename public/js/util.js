@@ -54,16 +54,23 @@ export function eventClockLabel(event, sport, periodLengthMs) {
 export function eventLabel(event, home, away, sport) {
   const team = event.side === 'home' ? home : away;
   const name = team ? esc(team.name) : 'Team';
-  if (event.type === 'goal') return { icon: '⚽', html: `<b>${name}</b> score a goal` };
-  if (event.type === 'own_goal') return { icon: '🥴', html: `<b>${name}</b> own goal` };
-  if (event.type === 'score') return { icon: '🏀', html: `<b>${name}</b> +${event.points}` };
-  if (event.type === 'yellow') return { icon: '🟨', html: `<b>${name}</b> yellow card` };
-  if (event.type === 'red') return { icon: '🟥', html: `<b>${name}</b> red card` };
-  if (event.type === 'foul') return { icon: '✋', html: `<b>${name}</b> foul` };
+  const who = event.player ? ` <span class="ev-player">${esc(event.player)}</span>` : '';
+  if (event.type === 'goal') return { icon: '⚽', html: `<b>${name}</b> goal${who}` };
+  if (event.type === 'minus_goal') return { icon: '↩️', html: `<b>${name}</b> goal removed${who}` };
+  if (event.type === 'own_goal') return { icon: '🥴', html: `<b>${name}</b> own goal${who}` };
+  if (event.type === 'score') return { icon: '🏀', html: `<b>${name}</b> +${event.points}${who}` };
+  if (event.type === 'yellow') return { icon: '🟨', html: `<b>${name}</b> yellow card${who}` };
+  if (event.type === 'red') return { icon: '🟥', html: `<b>${name}</b> red card${who}` };
+  if (event.type === 'yellow_red') return { icon: '🟨🟥', html: `<b>${name}</b> second yellow → red${who}` };
+  if (event.type === 'var') return { icon: '📺', html: `VAR: ${esc(event.note || 'review')} <span class="ev-player">${esc(name)}</span>` };
+  if (event.type === 'foul') return { icon: '✋', html: `<b>${name}</b> foul${who}` };
   if (event.type === 'timeout') return { icon: '⏱', html: `<b>${name}</b> timeout` };
-  if (event.type === 'sub') return { icon: '🔁', html: `<b>${name}</b> substitution` };
+  if (event.type === 'sub') return { icon: '🔁', html: `<b>${name}</b> substitution${who}` };
   return { icon: '•', html: `<b>${name}</b> ${esc(event.type)}` };
 }
+
+/** Events worth showing on the video overlay: referee calls and score changes. */
+export const OVERLAY_EVENTS = new Set(['goal', 'minus_goal', 'own_goal', 'yellow', 'red', 'yellow_red', 'var', 'score']);
 
 export function fmtDate(ts) {
   const d = new Date(ts);

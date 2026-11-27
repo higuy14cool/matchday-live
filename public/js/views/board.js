@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { esc, colorOf, clockState, periodLabel } from '../util.js';
+import { esc, colorOf, clockState, periodLabel, eventLabel, OVERLAY_EVENTS } from '../util.js';
 import { GameSocket } from '../live.js';
 
 function boardHTML(data, game) {
@@ -33,6 +33,7 @@ function boardHTML(data, game) {
         </div>
       </div>
 
+      <div class="board-events" id="board-events"></div>
       <div class="board-foot">
         <span class="board-meta">${game.venue ? esc(game.venue) + ' · ' : ''}${esc(game.round || '')}</span>
         <div class="board-actions">
@@ -54,6 +55,18 @@ export async function renderBoard(app, id) {
   const awayEl = app.querySelector('[data-board-away]');
   const clockEl = app.querySelector('[data-board-clock]');
   const stateEl = app.querySelector('.board-state');
+  const eventsEl = app.querySelector('#board-events');
+
+  function renderEvents() {
+    const seen = (game.events || []).filter(ev => OVERLAY_EVENTS.has(ev.type)).slice(-3).reverse();
+    eventsEl.innerHTML = seen.length && game.status !== 'scheduled'
+      ? seen.map(ev => {
+          const info = eventLabel(ev, data.home, data.away, game.sport);
+          return `<div class="stage-ev"><span class="sev-icon">${info.icon}</span><span class="sev-text">${info.html}</span></div>`;
+        }).join('')
+      : '';
+  }
+  renderEvents();
 
   const socket = new GameSocket(game.id);
   socket.on('game', msg => {
@@ -72,6 +85,7 @@ export async function renderBoard(app, id) {
     const live = game.status === 'live';
     stateEl.textContent = live ? '● LIVE' : game.status === 'final' ? 'FULL TIME' : 'SCHEDULED';
     stateEl.classList.toggle('live', live);
+    renderEvents();
     tick();
   });
   socket.connect();

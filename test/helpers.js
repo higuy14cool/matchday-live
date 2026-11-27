@@ -43,10 +43,29 @@ async function startServer(port) {
   };
 }
 
-async function json(base, method, urlPath, { body, key, raw } = {}) {
+let defaultCookie = null;
+
+function setDefaultCookie(cookie) {
+  defaultCookie = cookie;
+}
+
+async function login(base, username, password) {
+  const res = await fetch(base + '/api/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+  const setCookies = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
+  const header = setCookies[0] || res.headers.get('set-cookie') || '';
+  const data = await res.json().catch(() => null);
+  return { status: res.status, data, cookie: header.split(';')[0] };
+}
+
+async function json(base, method, urlPath, { body, cookie, anonymous = false, raw } = {}) {
   const headers = {};
   if (body !== undefined) headers['content-type'] = 'application/json';
-  if (key) headers['x-owner-key'] = key;
+  const jar = anonymous ? null : cookie !== undefined ? cookie : defaultCookie;
+  if (jar) headers.cookie = jar;
   const res = await fetch(base + urlPath, {
     method,
     headers,
@@ -58,4 +77,4 @@ async function json(base, method, urlPath, { body, key, raw } = {}) {
   return { status: res.status, data, text, type: res.headers.get('content-type') || '' };
 }
 
-module.exports = { startServer, json };
+module.exports = { startServer, json, login, setDefaultCookie };

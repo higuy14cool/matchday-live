@@ -1,4 +1,4 @@
-import { api, getOwnerKey, setOwnerKey } from '../api.js';
+import { api } from '../api.js';
 import { showFormModal, toast, confirmDialog } from '../ui.js';
 import { esc, toLocalInput, SPORT_LABEL } from '../util.js';
 
@@ -134,8 +134,7 @@ export function openNewTournament() {
           placement: data.placement === 'yes'
         }
       });
-      const { tournament, ownerKey } = res;
-      if (ownerKey) setOwnerKey(tournament.id, ownerKey);
+      const { tournament } = res;
       const games = res.games ? res.games.length : 0;
       toast(`${teams.length} teams · ${games} group game${games === 1 ? '' : 's'} created`);
       location.hash = `#/t/${tournament.id}`;
@@ -252,7 +251,7 @@ export function openNewTeam(tournament, nextNumber = 1, onDone) {
         name,
         short: (data.short || '').trim(),
         color: data.color
-      }, getOwnerKey(tournament.id));
+      });
       toast('Team added');
       if (onDone) onDone();
     }
@@ -321,7 +320,7 @@ export function openNewGame(tournament, teams, onDone) {
         round: data.round,
         venue: data.venue,
         live: data.start === 'live'
-      }, getOwnerKey(tournament.id));
+      });
       if (data.start === 'live') {
         toast('Game is live — clock started');
         location.hash = `#/g/${res.game.id}`;
@@ -371,7 +370,6 @@ export function openQuickGame() {
         awayName,
         live: data.start === 'live'
       });
-      if (res.ownerKey) setOwnerKey(res.tournament.id, res.ownerKey);
       toast(data.start === 'live' ? 'Quick game is live' : 'Quick game created');
       location.hash = `#/g/${res.game.id}`;
     }
@@ -389,7 +387,7 @@ export async function openFixtures(tournament, onDone) {
   try {
     const res = await api.post(`/tournaments/${encodeURIComponent(tournament.id)}/fixtures`, {
       startAt: new Date(Date.now() + 24 * 3600e3).toISOString()
-    }, getOwnerKey(tournament.id));
+    });
     toast(`${res.count || 0} games created`);
     if (onDone) onDone();
   } catch (err) {
@@ -410,7 +408,7 @@ export function openStreamLink(game, onDone) {
     onSubmit: async data => {
       const url = (data.url || '').trim();
       if (!url) throw new Error('Paste a link first');
-      await api.patch(`/games/${encodeURIComponent(game.id)}`, { streamUrl: url }, getOwnerKey(game.tournamentId));
+      await api.patch(`/games/${encodeURIComponent(game.id)}`, { streamUrl: url });
       toast('Stream embedded');
       if (onDone) onDone();
     }

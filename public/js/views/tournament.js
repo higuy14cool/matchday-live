@@ -1,4 +1,4 @@
-import { api, getOwnerKey, setOwnerKey, forgetOwnerKey } from '../api.js';
+import { api, canEdit } from '../api.js';
 import { toast, confirmDialog, showFormModal, copyText } from '../ui.js';
 import { esc, colorOf, SPORT_ICON, SPORT_LABEL, computeStandings, periodLabel } from '../util.js';
 import { gameRow, statusPill, sportPill } from '../components.js';
@@ -30,7 +30,7 @@ function gamesPanel(data) {
   const scheduled = data.games.filter(g => g.status === 'scheduled');
   const final = data.games.filter(g => g.status === 'final').slice().reverse();
   if (!data.games.length) {
-    return `<div class="empty" style="border:0"><span class="big">📅</span><strong>No games yet</strong><span class="tiny">${getOwnerKey(data.tournament.id) ? 'Add a game or generate the full fixture list.' : 'The organizer has not scheduled any games yet.'}</span></div>`;
+    return `<div class="empty" style="border:0"><span class="big">📅</span><strong>No games yet</strong><span class="tiny">${canEdit() ? 'Add a game or generate the full fixture list.' : 'The organizer has not scheduled any games yet.'}</span></div>`;
   }
   const rowsFor = list => list.map(g => gameRow(g, byId.get(g.homeTeamId), byId.get(g.awayTeamId))).join('');
   return `
@@ -98,7 +98,7 @@ function standingsPanel(data) {
 }
 
 function teamsPanel(data) {
-  const owner = Boolean(getOwnerKey(data.tournament.id));
+  const owner = canEdit();
   const rows = data.teams.map(t => `
     <div class="team-item">
       <span class="swatch" style="background:${colorOf(t)}"></span>
@@ -118,7 +118,7 @@ function teamsPanel(data) {
 
 function view(data) {
   const { tournament } = data;
-  const owner = Boolean(getOwnerKey(tournament.id));
+  const owner = canEdit();
   const liveCount = data.games.filter(g => g.status === 'live').length;
   const nextGame = data.games
     .filter(g => g.status === 'scheduled')
@@ -142,7 +142,7 @@ function view(data) {
         ${owner
           ? `<button class="btn btn-sm btn-ghost" data-act="rename">Rename</button>
              <button class="btn btn-sm btn-danger" data-act="delete">Delete</button>`
-          : `<button class="btn btn-sm btn-ghost" data-act="use-key">I have the key</button>`}
+          : `<button class="btn btn-sm btn-ghost" data-act="use-key">Viewing only</button>`}
       </div>
     </div>
 
@@ -195,7 +195,7 @@ export async function renderTournament(app, id) {
 
   function bind(data) {
     const { tournament } = data;
-    const owner = Boolean(getOwnerKey(tournament.id));
+    const owner = canEdit();
     const on = (act, fn) => app.querySelectorAll(`[data-act="${act}"]`).forEach(el => el.addEventListener('click', fn));
 
     on('copy', () => copyText(location.href, 'Tournament link copied'));
@@ -210,7 +210,7 @@ export async function renderTournament(app, id) {
         const ok = await confirmDialog({ title: 'Remove team', message: `Remove ${team.name} from this tournament?`, confirmLabel: 'Remove' });
         if (!ok) return;
         try {
-          await api.del(`/teams/${encodeURIComponent(team.id)}`, getOwnerKey(tournament.id));
+          await api.del(`/teams/${encodeURIComponent(team.id)}`);
           toast('Team removed');
           refresh();
         } catch (err) {
@@ -225,7 +225,7 @@ export async function renderTournament(app, id) {
           onSubmit: async fields => {
             const name = (fields.name || '').trim();
             if (!name) throw new Error('Name cannot be empty');
-            await api.patch(`/tournaments/${encodeURIComponent(tournament.id)}`, { name }, getOwnerKey(tournament.id));
+            await api.patch(`/tournaments/${encodeURIComponent(tournament.id)}`, { name });
             toast('Tournament renamed');
             refresh();
           }
@@ -239,8 +239,7 @@ export async function renderTournament(app, id) {
         });
         if (!ok) return;
         try {
-          await api.del(`/tournaments/${encodeURIComponent(tournament.id)}`, getOwnerKey(tournament.id));
-          forgetOwnerKey(tournament.id);
+          await api.del(`/tournaments/${encodeURIComponent(tournament.id)}`);
           toast('Tournament deleted');
           location.hash = '#/';
         } catch (err) {
@@ -248,30 +247,7 @@ export async function renderTournament(app, id) {
         }
       });
     } else {
-      on('use-key', () => {
-        showFormModal({
-          title: 'Organizer key',
-          submitLabel: 'Unlock',
-          bodyHTML: `<label class="field">
-            <span class="label">Owner key</span>
-            <input class="input" name="key" placeholder="Paste the key you saved" autocomplete="off">
-            <span class="hint">The key was shown once when the tournament was created. It lets you edit scores and start streams on this device.</span>
-          </label>`,
-          onSubmit: async fields => {
-            const key = (fields.key || '').trim();
-            if (!key) throw new Error('Paste the key first');
-            try {
-              await api.patch(`/tournaments/${encodeURIComponent(tournament.id)}`, { name: tournament.name }, key);
-              setOwnerKey(tournament.id, key);
-              toast('You can now manage this tournament');
-              refresh();
-            } catch (err) {
-              if (err.status === 403) throw new Error('That key does not match this tournament');
-              throw err;
-            }
-          }
-        });
-      });
+      on('use-key', () => toast('Viewers can watch and read the stats. Ask the organizer if you need an admin account.'));
     }
 
     // Keep the header clock-free but refresh the game list every 30s while

@@ -7,13 +7,17 @@ const express = require('express');
 const { Store } = require('./store');
 const { createLiveHub } = require('./live');
 const { createApi } = require('./api');
+const { createAuth } = require('./auth');
+const { createAuthApi } = require('./auth-api');
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
 const store = new Store();
-const hub = createLiveHub(store);
+const auth = createAuth({ store });
+auth.ensureBootstrapAdmin();
+const hub = createLiveHub(store, { auth });
 const app = express();
 
 app.disable('x-powered-by');
@@ -25,7 +29,9 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use('/api', createApi({ store, hub }));
+app.use(auth.loadUser);
+app.use('/api', createAuthApi({ auth, store }));
+app.use('/api', createApi({ store, hub, auth }));
 app.use(express.static(PUBLIC_DIR, { etag: true, maxAge: 0, extensions: ['html'] }));
 
 // Client-side routing: hand every non-API path to the app shell.
@@ -46,7 +52,7 @@ const server = http.createServer(app);
 hub.attach(server);
 
 server.listen(PORT, HOST, () => {
-  console.log(`Matchday Live running on http://localhost:${PORT}`);
+  console.log(`Matchday Live running on http://localhost:${PORT} (${store.users.length} account(s))`);
 });
 
 function shutdown() {
