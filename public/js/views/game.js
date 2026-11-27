@@ -141,7 +141,7 @@ export async function renderGame(app, id) {
             <div class="stage-actions">
               <button class="btn btn-sm btn-primary hidden" data-act="go-live" id="go-live-btn">● Go live</button>
               <button class="btn btn-sm btn-ghost hidden" data-act="stop-live" id="stop-live-btn">Stop stream</button>
-              <button class="btn btn-sm btn-ghost hidden" data-act="embed">Embed a link</button>
+              <button class="btn btn-sm btn-ghost hidden" data-act="embed" id="embed-btn">Embed a link</button>
               <span class="tiny muted" id="live-hint"></span>
             </div>
           </div>
@@ -234,6 +234,9 @@ export async function renderGame(app, id) {
     viewersEl.textContent = showVideo ? `${viewers} watching` : '';
     $('#stream-mode').textContent = broadcasterActive ? 'You are live' : remoteOnAir ? 'On air' : hasEmbed ? 'Embedded' : '';
     $('#go-live-btn').classList.toggle('hidden', !owner || broadcasterActive);
+    const embedBtn = $('#embed-btn');
+    embedBtn.classList.toggle('hidden', !owner || broadcasterActive);
+    embedBtn.textContent = rawEmbed ? 'Change embed link' : 'Embed a link';
     $('#stop-live-btn').classList.toggle('hidden', !broadcasterActive);
     $('#live-hint').textContent = broadcasterActive
       ? 'Keep this tab open while you broadcast.'
