@@ -25,7 +25,7 @@ function publicTournament(t) {
 }
 
 function publicTeam(t) {
-  return { id: t.id, tournamentId: t.tournamentId, name: t.name, short: t.short, color: t.color };
+  return { id: t.id, tournamentId: t.tournamentId, name: t.name, short: t.short, color: t.color, group: Number.isInteger(t.group) ? t.group : null };
 }
 
 function publicGame(g) {

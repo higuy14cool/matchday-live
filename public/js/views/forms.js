@@ -34,6 +34,11 @@ export function openNewTournament() {
         <textarea class="input" name="teams" rows="7" placeholder="Riverside FC&#10;Northside United&#10;Harbour City&#10;..."></textarea>
         <span class="hint" id="team-count">3 to 80 teams. Names must be different.</span>
       </label>
+      <div class="field" id="group-assign-wrap" style="display:none">
+        <span class="label">Assign teams to groups <span class="muted">(optional)</span></span>
+        <div class="stack" id="group-assign" style="gap:6px"></div>
+        <span class="hint">Leave as is for an automatic split, or pick a group for every team.</span>
+      </div>
 
       <div class="wizard-step"><span class="step-num">3</span><span>Tournament format</span></div>
       <div class="form-row">
@@ -75,7 +80,15 @@ export function openNewTournament() {
           </select>
         </label>
       </div>
-      <p class="hint" id="format-hint">Group games are scheduled automatically. Create quarterfinal, semifinal and final games once the qualifiers are known.</p>`,
+      <label class="ctrl-box" id="third-row" style="display:none;cursor:pointer;margin:0;align-items:center;gap:8px;padding:12px">
+        <input type="checkbox" name="thirdPlace" value="yes">
+        <span>Third-place match <span class="muted">— the two semifinal losers play it</span></span>
+      </label>
+      <label class="ctrl-box" id="placement-row" style="display:none;cursor:pointer;margin:0;align-items:center;gap:8px;padding:12px">
+        <input type="checkbox" name="placement" value="yes">
+        <span>5th/6th place match <span class="muted">— the next two teams play it (e.g. 3rd in each group of six)</span></span>
+      </label>
+      <p class="hint" id="format-hint">Group games are scheduled automatically. Semifinal and final games are created automatically as rounds finish.</p>`,
     onSubmit: async data => {
       const name = (data.name || '').trim();
       if (!name) throw new Error('Give the tournament a name');
@@ -94,15 +107,31 @@ export function openNewTournament() {
       if (groupStage !== 'none' && groups * 2 > teams.length) {
         throw new Error(`${groups} groups need at least ${groups * 2} teams`);
       }
+
+      let teamSpecs = teams;
+      if (groupStage !== 'none') {
+        const counts = Array(groups).fill(0);
+        teamSpecs = teams.map((team, i) => {
+          let group = assignState.get(team);
+          if (!Number.isInteger(group) || group < 0 || group >= groups) group = i % groups;
+          counts[group] += 1;
+          return { name: team, group };
+        });
+        const empty = counts.findIndex(n => n < 2);
+        if (empty !== -1) throw new Error(`Group ${String.fromCharCode(65 + empty)} needs at least two teams`);
+      }
+
       const res = await api.post('/tournaments', {
         name,
         sport: data.sport || 'soccer',
-        teams,
+        teams: teamSpecs,
         format: {
           groups,
           groupStage,
           knockout,
-          advancePerGroup: Number(data.advancePerGroup || 2)
+          advancePerGroup: Number(data.advancePerGroup || 2),
+          thirdPlace: data.thirdPlace === 'yes',
+          placement: data.placement === 'yes'
         }
       });
       const { tournament, ownerKey } = res;
@@ -118,10 +147,51 @@ export function openNewTournament() {
   const countEl = form.querySelector('#team-count');
   const groupsEl = form.querySelector('#groups-select');
   const stageEl = form.querySelector('#group-stage-select');
+  const knockoutEl = form.querySelector('[name="knockout"]');
   const hintEl = form.querySelector('#format-hint');
+  const assignWrap = form.querySelector('#group-assign-wrap');
+  const assignHost = form.querySelector('#group-assign');
+  const thirdRow = form.querySelector('#third-row');
+  const placementRow = form.querySelector('#placement-row');
+  const assignState = new Map();
+  let assignKey = '';
+
+  function parseNames() {
+    return (teamsEl.value || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  }
+
+  function renderAssign() {
+    const names = parseNames();
+    const groups = stageEl.value === 'none' ? 0 : Number(groupsEl.value);
+    const key = `${names.join('|')}#${groups}`;
+    if (key === assignKey) return;
+    assignKey = key;
+    if (!groups || !names.length) {
+      assignWrap.style.display = 'none';
+      assignHost.innerHTML = '';
+      return;
+    }
+    assignWrap.style.display = '';
+    assignHost.innerHTML = names.map((name, i) => {
+      let group = assignState.get(name);
+      if (!Number.isInteger(group) || group < 0 || group >= groups) {
+        group = i % groups;
+        assignState.set(name, group);
+      }
+      const options = Array.from({ length: groups }, (_, g) =>
+        `<option value="${g}"${g === group ? ' selected' : ''}>Group ${String.fromCharCode(65 + g)}</option>`).join('');
+      return `<div class="row" style="align-items:center;gap:10px">
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(name)}</span>
+        <select class="select" data-team="${esc(name)}" style="max-width:150px;height:36px">${options}</select>
+      </div>`;
+    }).join('');
+    assignHost.querySelectorAll('select[data-team]').forEach(select => {
+      select.addEventListener('change', () => assignState.set(select.dataset.team, Number(select.value)));
+    });
+  }
 
   function refresh() {
-    const count = (teamsEl.value || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean).length;
+    const count = parseNames().length;
     countEl.textContent = `${count} team${count === 1 ? '' : 's'} — needs 3 to 80.`;
     countEl.style.color = count >= 3 && count <= 80 ? 'var(--muted)' : 'var(--red)';
     const straight = stageEl.value === 'none';
@@ -134,12 +204,24 @@ export function openNewTournament() {
       const usable = [...groupsEl.options].filter(o => !o.disabled).pop();
       if (usable) groupsEl.value = usable.value;
     }
+
+    const knockout = knockoutEl.value;
+    const showThird = knockout === 'semifinal' || knockout === 'quarterfinal';
+    thirdRow.style.display = showThird ? 'flex' : 'none';
+    if (!showThird) thirdRow.querySelector('input').checked = false;
+    const showPlacement = !straight && knockout !== 'none';
+    placementRow.style.display = showPlacement ? 'flex' : 'none';
+    if (!showPlacement) placementRow.querySelector('input').checked = false;
+
     if (straight) hintEl.textContent = 'No group games are generated. Create each knockout game by hand as the bracket unfolds.';
-    else hintEl.textContent = `${groupsEl.value} group${groupsEl.value === '1' ? '' : 's'} · ${stageEl.value === 'double' ? 'double' : 'single'} round robin. Group games are scheduled automatically; knockout games are created when the qualifiers are known.`;
+    else hintEl.textContent = `${groupsEl.value} group${groupsEl.value === '1' ? '' : 's'} · ${stageEl.value === 'double' ? 'double' : 'single'} round robin. Group games are scheduled automatically; knockout games are created as rounds finish.`;
+
+    renderAssign();
   }
   teamsEl.addEventListener('input', refresh);
   stageEl.addEventListener('change', refresh);
   groupsEl.addEventListener('change', refresh);
+  knockoutEl.addEventListener('change', refresh);
   refresh();
 }
 
@@ -183,7 +265,9 @@ function stageChoices(format) {
       ['group', 'Group stage'],
       ['qf', 'Quarterfinal'],
       ['sf', 'Semifinal'],
-      ['final', 'Final']
+      ['third', 'Third place'],
+      ['final', 'Final'],
+      ['placement', '5th/6th place']
     ];
   }
   const stages = [];
@@ -191,6 +275,11 @@ function stageChoices(format) {
   if (format.knockout === 'quarterfinal') stages.push(['qf', 'Quarterfinal'], ['sf', 'Semifinal'], ['final', 'Final']);
   else if (format.knockout === 'semifinal') stages.push(['sf', 'Semifinal'], ['final', 'Final']);
   else if (format.knockout === 'final') stages.push(['final', 'Final']);
+  if (format.thirdPlace) {
+    const at = stages.findIndex(([value]) => value === 'final');
+    stages.splice(at === -1 ? stages.length : at, 0, ['third', 'Third place']);
+  }
+  if (format.placement && format.groupStage !== 'none') stages.push(['placement', '5th/6th place']);
   return stages.length ? stages : [['group', 'Group stage']];
 }
 

@@ -68,6 +68,8 @@ function controlsHTML(game, home, away) {
       <button class="btn btn-sm btn-ghost" data-act="clock-next">${NEXT_PERIOD_LABEL[game.sport] || 'Next period'}</button>
       <button class="btn btn-sm btn-ghost" data-act="clock-reset">Reset clock</button>
       <button class="btn btn-sm btn-ghost" data-act="score-edit">Set score</button>
+      ${game.stage && game.stage !== 'group' && game.status === 'scheduled'
+        ? '<button class="btn btn-sm btn-ghost" data-act="edit-teams">Change teams</button>' : ''}
       <button class="btn btn-sm btn-ghost" data-act="undo">↶ Undo</button>
       <button class="btn btn-sm btn-danger" data-act="end-game">End game</button>
     </div>`;
@@ -451,6 +453,37 @@ export async function renderGame(app, id) {
           }, getOwnerKey(game.tournamentId));
           if (res && res.game) apply(res.game);
           toast(final ? 'Final score saved' : 'Score saved');
+        }
+      });
+    }
+    if (act === 'edit-teams') {
+      let full;
+      try {
+        full = await api.get(`/tournaments/${encodeURIComponent(game.tournamentId)}`);
+      } catch (err) {
+        return toast(err.message, 'error');
+      }
+      const options = selected => full.teams
+        .map(t => `<option value="${esc(t.id)}"${t.id === selected ? ' selected' : ''}>${esc(t.name)}</option>`)
+        .join('');
+      return showFormModal({
+        title: 'Who plays this game?',
+        submitLabel: 'Save teams',
+        bodyHTML: `<div class="form-row">
+          <label class="field"><span class="label">Home</span><select class="select" name="home">${options(game.homeTeamId)}</select></label>
+          <label class="field"><span class="label">Away</span><select class="select" name="away">${options(game.awayTeamId)}</select></label>
+        </div>
+        <p class="hint">The winner still moves on to the next round; the loser drops to the third-place match when the tournament has one.</p>`,
+        onSubmit: async fields => {
+          const res = await api.patch(`/games/${encodeURIComponent(game.id)}`, {
+            homeTeamId: fields.home,
+            awayTeamId: fields.away
+          }, getOwnerKey(game.tournamentId));
+          if (res && res.home) data.home = res.home;
+          if (res && res.away) data.away = res.away;
+          if (res && res.game) apply(res.game);
+          renderScoreboard(false);
+          toast('Matchup updated');
         }
       });
     }

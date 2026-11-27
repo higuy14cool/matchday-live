@@ -3,9 +3,26 @@
 const express = require('express');
 const { publicGame, publicTeam, publicTournament, applyEvent, undoLast, clockAction, endGame } = require('./gameplay');
 const { ensureOwner, bad, str, optionalDate, httpUrl } = require('./api-helpers');
+const { newId } = require('./store');
+const { advanceTournament } = require('./bracket');
 
 function createGamesApi({ store, hub, pushGame }) {
   const router = express.Router();
+
+  // When a round finishes, create the games that follow it (QF winners into
+  // the semifinals, SF winners into the final, SF losers into third place).
+  function advance(game) {
+    if (game.status !== 'final') return;
+    const tournament = store.tournament(game.tournamentId);
+    if (!tournament) return;
+    const makeId = () => {
+      let id = newId('gm');
+      while (store.game(id)) id = newId('gm');
+      return id;
+    };
+    const created = advanceTournament(store, tournament, game, makeId);
+    for (const next of created) pushGame(next);
+  }
 
   function load(req, res) {
     const game = store.game(req.params.id);
@@ -65,6 +82,19 @@ function createGamesApi({ store, hub, pushGame }) {
 
     if (body.venue !== undefined) game.venue = str(body.venue, 60);
     if (body.round !== undefined) game.round = str(body.round, 40);
+    if (body.homeTeamId !== undefined || body.awayTeamId !== undefined) {
+      if (game.status !== 'scheduled') return bad(res, 'Teams can only be changed before a game starts');
+      if (game.stage === 'group') return bad(res, 'Group game teams are fixed');
+      const homeId = body.homeTeamId !== undefined ? String(body.homeTeamId) : game.homeTeamId;
+      const awayId = body.awayTeamId !== undefined ? String(body.awayTeamId) : game.awayTeamId;
+      const homeTeam = store.team(homeId);
+      const awayTeam = store.team(awayId);
+      if (!homeTeam || homeTeam.tournamentId !== game.tournamentId) return bad(res, 'Home team is not in this tournament');
+      if (!awayTeam || awayTeam.tournamentId !== game.tournamentId) return bad(res, 'Away team is not in this tournament');
+      if (homeId === awayId) return bad(res, 'A team cannot play itself');
+      game.homeTeamId = homeId;
+      game.awayTeamId = awayId;
+    }
     if (body.scheduledAt !== undefined) {
       const ms = optionalDate(body.scheduledAt);
       if (ms === null) return bad(res, 'Invalid date');
@@ -89,6 +119,7 @@ function createGamesApi({ store, hub, pushGame }) {
     game.updatedAt = Date.now();
     store.save();
     pushGame(game);
+    advance(game);
     res.json(detail(game));
   });
 
@@ -144,6 +175,7 @@ function createGamesApi({ store, hub, pushGame }) {
     ctx.game.updatedAt = Date.now();
     store.save();
     pushGame(ctx.game);
+    advance(ctx.game);
     res.json(detail(ctx.game));
   });
 

@@ -15,6 +15,8 @@ function formatText(format) {
   if (format.knockout === 'quarterfinal') parts.push('QF → SF → Final');
   else if (format.knockout === 'semifinal') parts.push('SF → Final');
   else if (format.knockout === 'final') parts.push('Final');
+  if (format.thirdPlace) parts.push('3rd place match');
+  if (format.placement) parts.push('5th/6th place match');
   return parts.join(' · ');
 }
 
@@ -101,7 +103,7 @@ function teamsPanel(data) {
     <div class="team-item">
       <span class="swatch" style="background:${colorOf(t)}"></span>
       <span class="nm">${esc(t.name)}</span>
-      <span class="badge-short">${esc(t.short || '')}</span>
+      ${t.group !== null && t.group !== undefined ? `<span class="badge-short">Group ${String.fromCharCode(65 + t.group)}</span>` : `<span class="badge-short">${esc(t.short || '')}</span>`}
       ${owner ? `<button class="icon-btn" data-act="delete-team" data-id="${esc(t.id)}" title="Remove team" aria-label="Remove ${esc(t.name)}">✕</button>` : ''}
     </div>`).join('');
   return `
@@ -169,7 +171,7 @@ function view(data) {
           <div class="panel-body tiny muted" style="line-height:1.7">
             Open any game to run the clock, update the score and start a live video with an on-screen scoreboard.
             ${tournament.sport === 'soccer' ? 'Games are two 45-minute halves.' : 'Games are four 10-minute quarters.'}
-            ${tournament.format && tournament.format.knockout !== 'none' ? '<br><br>After the group stage, create the knockout games with <b>+ New game</b> and pick the quarterfinal, semifinal or final stage.' : ''}
+            ${tournament.format && tournament.format.knockout !== 'none' ? `<br><br>Knockout games are created automatically as rounds finish: semifinal winners go to the final${tournament.format.thirdPlace ? ', semifinal losers play the third-place match' : ''}${tournament.format.placement ? ', and the next two teams play for 5th/6th' : ''}. To change who plays a semifinal, open that game and use <b>Change teams</b>; the winners and losers still move on the same way. You can also add or edit a knockout game yourself with <b>+ New game</b>.` : ''}
             ${owner ? '' : '<br><br>Only the organizer can change scores. You can still watch every update live.'}
           </div>
         </section>

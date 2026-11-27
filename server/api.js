@@ -37,7 +37,8 @@ function createApi({ store, hub }) {
   }
 
   // Team names arrive together with the tournament so the organizer can set
-  // up the whole competition in one step.
+  // up the whole competition in one step. An entry may be a plain name or
+  // { name, group } when the organizer assigns teams to groups by hand.
   function parseTeamNames(raw) {
     if (raw === undefined) return { names: [] };
     if (!Array.isArray(raw)) return { error: 'teams must be an array of names' };
@@ -45,28 +46,44 @@ function createApi({ store, hub }) {
       return { error: `A tournament needs between 3 and ${MAX_TEAMS} teams` };
     }
     const names = [];
+    const groups = [];
     const seen = new Set();
     for (const item of raw) {
-      const name = str(item, 40);
+      const rawName = typeof item === 'string' ? item : item && item.name;
+      const name = str(rawName, 40);
       if (!name) return { error: 'Every team needs a name' };
       const key = name.toLowerCase();
       if (seen.has(key)) return { error: `Team name "${name}" is used twice` };
       seen.add(key);
       names.push(name);
+
+      if (item && typeof item === 'object' && item.group !== undefined && item.group !== null) {
+        const group = Number(item.group);
+        if (!Number.isInteger(group) || group < 0 || group > 15) {
+          return { error: 'Group numbers must be whole numbers starting at 0' };
+        }
+        groups.push(group);
+      } else {
+        groups.push(null);
+      }
     }
-    return { names };
+    return { names, groups };
   }
 
-  function buildTeams(tournament, names) {
+  function buildTeams(tournament, names, groups = []) {
     const usedShorts = new Set();
-    return names.map((name, i) => ({
-      id: uniqueId('tm', id => Boolean(store.team(id))),
-      tournamentId: tournament.id,
-      name,
-      short: shortName(name, usedShorts),
-      color: TEAM_COLORS[i % TEAM_COLORS.length],
-      createdAt: Date.now()
-    }));
+    return names.map((name, i) => {
+      const team = {
+        id: uniqueId('tm', id => Boolean(store.team(id))),
+        tournamentId: tournament.id,
+        name,
+        short: shortName(name, usedShorts),
+        color: TEAM_COLORS[i % TEAM_COLORS.length],
+        createdAt: Date.now()
+      };
+      if (Number.isInteger(groups[i])) team.group = groups[i];
+      return team;
+    });
   }
 
   function tournamentPayload(t) {
@@ -129,7 +146,7 @@ function createApi({ store, hub }) {
       ownerHash: hashKey(key),
       createdAt: Date.now()
     };
-    const teams = buildTeams(tournament, teamNames);
+    const teams = buildTeams(tournament, teamNames, parsedTeams.groups);
 
     let games = [];
     if (format) {
@@ -254,7 +271,7 @@ function createApi({ store, hub }) {
     const live = req.body.live === true;
 
     const stage = str(req.body.stage, 12);
-    if (stage && !['group', 'qf', 'sf', 'final'].includes(stage)) return bad(res, 'Invalid stage');
+    if (stage && !['group', 'qf', 'sf', 'third', 'final', 'placement'].includes(stage)) return bad(res, 'Invalid stage');
     if (stage && t.format && !stagesFor(t.format).includes(stage)) {
       return bad(res, `This tournament does not have a ${stageLabel(stage)}`);
     }

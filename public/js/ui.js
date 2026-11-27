@@ -107,7 +107,11 @@ export function showFormModal({ title, bodyHTML, submitLabel = 'Save', danger = 
   }
 
   const firstInput = form.querySelector('input, select, textarea');
-  if (firstInput) setTimeout(() => firstInput.focus(), 60);
+  // Only take focus if the person has not started typing somewhere else already.
+  if (firstInput) setTimeout(() => {
+    const active = document.activeElement;
+    if (!active || active === document.body || !form.contains(active)) firstInput.focus();
+  }, 60);
   return { close, form };
 }
 
