@@ -19,6 +19,10 @@ One small Node server, no build step, no database to install.
 - **Big scoreboard** – a full-screen board (`#/g/<id>/board`) for a projector or a second screen, with a fullscreen button.
 - **Live video** – the organizer can go live from the phone camera (WebRTC, peer to peer) or embed a YouTube/Twitch link. The scoreboard overlays the video.
 - **Accounts and roles** – the site asks you to sign in first. Admins create tournaments and games, record results, go live and manage accounts; viewers can only watch, read the stats and follow a live game.
+- **Full screen while filming** – the admin filming a game gets a **⛶ Full screen** button next to the camera controls. The video, the referee bar and the call overlays fill the screen; the button turns into **⤢ Exit full screen**.
+- **Penalty shootouts** – in a knockout game, after extra time (2nd half → ET 1 → ET 2) the next clock step offers **Penalty shootout**. From then on, adding or removing a goal counts a penalty instead of a match goal, the scoreboard shows a **Pens 3–2** pill, and the big board shows it too. **← Leave penalties** goes back if you pressed it by mistake.
+- **Penalty-only games** – tick *Penalty shootout only (no clock)* when creating a soccer game (quick game or tournament game) to start straight in a shootout with no match clock.
+- **Deleting games** – the organizer can delete a game from its page (**🗑 Delete game** in the controls) or from the **🗑** button next to each fixture in a tournament. The game, its score and its events go; a one-game quick tournament goes with it. Viewers never see the button.
 - **Referee bar while filming** – on a live game the admin gets a row of buttons under the video: VAR, yellow card, red card, second yellow → red, add a goal, subtract a goal. Each one asks who it is for (team and player, or a VAR description), then the call appears in the video's left corner for every viewer. Goals change only the scoreboard. Viewers never receive these buttons.
 - **Accounts page** (`#/users`) – the admin makes a username and password for each viewer, so they can sign in on their own computer; deleting an account signs that viewer out at once.
 
@@ -94,13 +98,16 @@ Reading needs any signed-in account. Every write needs an **admin** session; vie
 | `POST`   | `/api/games/:id/events`                | goal / minus_goal / score / card / VAR / foul |
 | `PATCH`  | `/api/games/:id`                       | change teams, venue or status    |
 | `POST`   | `/api/games/:id/undo`                  | undo last event                  |
-| `POST`   | `/api/games/:id/score`                 | set the score outright           |
+| `POST`   | `/api/games/:id/score`                 | set the score outright (and `pens` in a shootout) |
+| `DELETE` | `/api/games/:id`                       | delete a game (admin only)       |
 | `POST`   | `/api/games/:id/clock`                 | start / pause / reset / next     |
 | `POST`   | `/api/games/:id/stream`                | set or clear an embed URL        |
 
 Creating a game accepts `"live": true` to set it live and start the clock right away; the default is a scheduled game. It also accepts `"stage"`: `group`, `qf`, `sf`, `third`, `final` or `placement`; the stage is checked against the tournament's format (a final-only tournament refuses a quarterfinal).
 
 `PATCH /api/games/:id` with `{"homeTeamId": "...", "awayTeamId": "..."}` changes who plays a scheduled knockout game (group games and games that have started keep their teams).
+
+During a penalty shootout `POST /api/games/:id/score` also takes `"pens": {"home": 3, "away": 2}`; `GET /api/games/:id` reports `shootout: {active, home, away}` and `shootoutOnly`.
 
 Set a score with `POST /api/games/:id/score` and `{"home": 3, "away": 1, "final": true}` to store the final result and finish the game. Finishing a group round or a knockout round creates the next games automatically.
 

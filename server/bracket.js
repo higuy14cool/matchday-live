@@ -78,10 +78,20 @@ function globalRanking(tables, sport) {
   return ranked;
 }
 
+// A level knockout tie is decided by the shootout when one was played.
+function pensOf(game) {
+  if (!game.shootout) return null;
+  if (!game.shootout.active && !game.shootout.home && !game.shootout.away) return null;
+  return game.shootout;
+}
+
 function winnerOf(game) {
   if (game.status !== 'final') return null;
   if (game.score.home > game.score.away) return game.homeTeamId;
   if (game.score.away > game.score.home) return game.awayTeamId;
+  const pens = pensOf(game);
+  if (pens && pens.home > pens.away) return game.homeTeamId;
+  if (pens && pens.away > pens.home) return game.awayTeamId;
   return null;
 }
 
@@ -89,6 +99,9 @@ function loserOf(game) {
   if (game.status !== 'final') return null;
   if (game.score.home > game.score.away) return game.awayTeamId;
   if (game.score.away > game.score.home) return game.homeTeamId;
+  const pens = pensOf(game);
+  if (pens && pens.home > pens.away) return game.awayTeamId;
+  if (pens && pens.away > pens.home) return game.homeTeamId;
   return null;
 }
 

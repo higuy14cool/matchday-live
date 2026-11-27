@@ -127,6 +127,11 @@ function createGamesApi({ store, hub, pushGame }) {
     const ctx = load(req, res);
     if (!ctx) return;
     store.remove('games', ctx.game.id);
+    // A quick game owns a throwaway tournament: drop it with its last game.
+    if (ctx.tournament.quick && store.gamesOf(ctx.tournament.id).length === 0) {
+      for (const team of store.teamsOf(ctx.tournament.id)) store.remove('teams', team.id);
+      store.remove('tournaments', ctx.tournament.id);
+    }
     res.json({ ok: true });
   });
 
@@ -167,6 +172,15 @@ function createGamesApi({ store, hub, pushGame }) {
       return bad(res, 'home and away must be whole numbers between 0 and 999');
     }
     if (body.final !== undefined && typeof body.final !== 'boolean') return bad(res, 'final must be true or false');
+    if (body.pens !== undefined) {
+      if (!ctx.game.shootout || !ctx.game.shootout.active) return bad(res, 'This game has no penalty shootout');
+      const pens = body.pens || {};
+      if (!Number.isInteger(pens.home) || !Number.isInteger(pens.away) || pens.home < 0 || pens.away < 0 || pens.home > 99 || pens.away > 99) {
+        return bad(res, 'pens.home and pens.away must be whole numbers between 0 and 99');
+      }
+      ctx.game.shootout.home = pens.home;
+      ctx.game.shootout.away = pens.away;
+    }
     ctx.game.score.home = home;
     ctx.game.score.away = away;
     if (body.final === true) {

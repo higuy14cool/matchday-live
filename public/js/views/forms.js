@@ -309,7 +309,10 @@ export function openNewGame(tournament, teams, onDone) {
       </div>
       <label class="field"><span class="label">Date &amp; time</span><input class="input" type="datetime-local" name="scheduledAt" value="${toLocalInput(Date.now() + 3600e3)}"></label>
       <label class="field"><span class="label">Round <span class="muted">(optional)</span></span><input class="input" name="round" maxlength="40" placeholder="Matchday 1"></label>
-      <label class="field"><span class="label">Venue <span class="muted">(optional)</span></span><input class="input" name="venue" maxlength="60" placeholder="Riverside Park"></label>`,
+      <label class="field"><span class="label">Venue <span class="muted">(optional)</span></span><input class="input" name="venue" maxlength="60" placeholder="Riverside Park"></label>
+      ${tournament.sport === 'soccer' ? `<label class="ctrl-box" style="display:flex;align-items:center;gap:9px;padding:12px;cursor:pointer">
+        <input type="checkbox" name="shootout" value="yes"> <span>Penalty shootout only <span class="muted">(no clock)</span></span>
+      </label>` : ''}`,
     onSubmit: async data => {
       if (data.homeTeamId === data.awayTeamId) throw new Error('Pick two different teams');
       const res = await api.post(`/tournaments/${encodeURIComponent(tournament.id)}/games`, {
@@ -319,7 +322,8 @@ export function openNewGame(tournament, teams, onDone) {
         scheduledAt: data.scheduledAt ? new Date(data.scheduledAt).toISOString() : undefined,
         round: data.round,
         venue: data.venue,
-        live: data.start === 'live'
+        live: data.start === 'live',
+        shootout: data.shootout === 'yes'
       });
       if (data.start === 'live') {
         toast('Game is live — clock started');
@@ -358,19 +362,26 @@ export function openQuickGame() {
           <option value="scheduled">Scheduled</option>
           <option value="live">Live now — start the clock</option>
         </select>
+      </label>
+      <label class="ctrl-box" style="display:flex;align-items:center;gap:9px;padding:12px;cursor:pointer">
+        <input type="checkbox" name="shootout" id="quick-shootout" value="yes">
+        <span>Penalty shootout only <span class="muted">(soccer — score only penalties, no clock)</span></span>
       </label>`,
     onSubmit: async data => {
       const homeName = (data.homeName || '').trim();
       const awayName = (data.awayName || '').trim();
       if (!homeName || !awayName) throw new Error('Give both teams a name');
       if (homeName.toLowerCase() === awayName.toLowerCase()) throw new Error('Pick two different teams');
+      const shootout = data.shootout === 'yes';
+      if (shootout && (data.sport || 'soccer') !== 'soccer') throw new Error('Penalty shootouts are soccer only');
       const res = await api.post('/quick-games', {
         sport: data.sport || 'soccer',
         homeName,
         awayName,
-        live: data.start === 'live'
+        live: data.start === 'live' && !shootout,
+        shootout
       });
-      toast(data.start === 'live' ? 'Quick game is live' : 'Quick game created');
+      toast(shootout ? 'Penalty shootout created' : data.start === 'live' ? 'Quick game is live' : 'Quick game created');
       location.hash = `#/g/${res.game.id}`;
     }
   });

@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { esc, colorOf, clockState, periodLabel, eventLabel, OVERLAY_EVENTS } from '../util.js';
+import { esc, colorOf, clockState, periodLabel, pensLabel, eventLabel, OVERLAY_EVENTS } from '../util.js';
 import { GameSocket } from '../live.js';
 
 function boardHTML(data, game) {
@@ -23,6 +23,7 @@ function boardHTML(data, game) {
         <div class="board-center">
           <span class="board-clock${clock.running ? ' running' : ''}" data-board-clock>${esc(clock.text)}</span>
           <span class="board-period">${esc(periodLabel(game.sport, game.period))}</span>
+          ${pensLabel(game) ? `<span class="board-pens" data-board-pens>${esc(pensLabel(game))}</span>` : ''}
           <span class="board-sport">${game.sport === 'basketball' ? '🏀 Basketball' : '⚽ Soccer'}</span>
         </div>
 
@@ -55,6 +56,8 @@ export async function renderBoard(app, id) {
   const awayEl = app.querySelector('[data-board-away]');
   const clockEl = app.querySelector('[data-board-clock]');
   const stateEl = app.querySelector('.board-state');
+  const periodEl = app.querySelector('.board-period');
+  const pensEl = app.querySelector('[data-board-pens]');
   const eventsEl = app.querySelector('#board-events');
 
   function renderEvents() {
@@ -85,6 +88,12 @@ export async function renderBoard(app, id) {
     const live = game.status === 'live';
     stateEl.textContent = live ? '● LIVE' : game.status === 'final' ? 'FULL TIME' : 'SCHEDULED';
     stateEl.classList.toggle('live', live);
+    if (periodEl) periodEl.textContent = periodLabel(game.sport, game.period);
+    if (pensEl) {
+      const text = pensLabel(game);
+      pensEl.textContent = text;
+      pensEl.hidden = !text;
+    }
     renderEvents();
     tick();
   });

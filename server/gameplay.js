@@ -17,6 +17,21 @@ const SCORE_EVENTS = {
 const CARD_EVENTS = new Set(['yellow', 'red', 'yellow_red']);
 const OTHER_EVENTS = new Set(['foul', 'timeout', 'sub', 'var']);
 
+// A knockout tie that is still level after extra time goes to penalties: the
+// 5th soccer period. Goals then count in the shootout, not on the scoreboard.
+const KNOCKOUT_STAGES = new Set(['qf', 'sf', 'final', 'third', 'placement']);
+const SHOOTOUT_PERIOD = 5;
+
+function inShootout(game) {
+  return Boolean(game.shootout && game.shootout.active);
+}
+
+function canStartShootout(game) {
+  if (game.sport !== 'soccer' || game.shootoutOnly) return false;
+  if (!KNOCKOUT_STAGES.has(game.stage)) return false;
+  return game.clock.period >= 4; // after a second period of extra time
+}
+
 // What the browser sees. Owner keys never leave the server.
 function publicTournament(t) {
   return {
@@ -54,14 +69,21 @@ function publicGame(g) {
       elapsedMs: clockElapsed(g),
       serverNow: Date.now()
     },
+    shootout: {
+      active: Boolean(g.shootout && g.shootout.active),
+      home: g.shootout ? g.shootout.home : 0,
+      away: g.shootout ? g.shootout.away : 0
+    },
+    shootoutOnly: Boolean(g.shootoutOnly),
     events: g.events.slice(-80),
     streamUrl: g.streamUrl || '',
     updatedAt: g.updatedAt
   };
 }
 
-function newGame({ id, tournamentId, sport, homeTeamId, awayTeamId, stage, round, venue, scheduledAt }) {
+function newGame({ id, tournamentId, sport, homeTeamId, awayTeamId, stage, round, venue, scheduledAt, shootout }) {
   const conf = SPORTS[sport] || SPORTS.soccer;
+  const pensOnly = Boolean(shootout) && sport === 'soccer';
   return {
     id,
     tournamentId,
@@ -74,7 +96,9 @@ function newGame({ id, tournamentId, sport, homeTeamId, awayTeamId, stage, round
     scheduledAt: scheduledAt || Date.now(),
     status: 'scheduled',
     score: { home: 0, away: 0 },
-    clock: { running: false, elapsedMs: 0, startedAt: null, period: 1, periodLengthMs: conf.periodLengthMs },
+    clock: { running: false, elapsedMs: 0, startedAt: null, period: pensOnly ? SHOOTOUT_PERIOD : 1, periodLengthMs: conf.periodLengthMs },
+    shootout: { active: pensOnly, home: 0, away: 0 },
+    shootoutOnly: pensOnly,
     events: [],
     streamUrl: '',
     createdAt: Date.now(),
@@ -110,6 +134,20 @@ function applyEvent(game, input) {
     at: Date.now(),
     scoreEffect: { home: 0, away: 0 }
   };
+
+  // During a shootout a goal is a penalty: it moves the shootout score only.
+  if (inShootout(game) && (type === 'goal' || type === 'minus_goal')) {
+    if (type === 'minus_goal' && game.shootout[side] < 1) return 'That team has no penalty to remove';
+    event.shootout = true;
+    event.pensEffect = { home: 0, away: 0 };
+    event.pensEffect[side] = type === 'goal' ? 1 : -1;
+    game.shootout.home += event.pensEffect.home;
+    game.shootout.away += event.pensEffect.away;
+    game.events.push(event);
+    game.updatedAt = Date.now();
+    if (game.status === 'scheduled') game.status = 'live';
+    return null;
+  }
 
   if (type === 'goal') event.scoreEffect[side] = 1;
   if (type === 'own_goal') event.scoreEffect[otherSide(side)] = 1;
@@ -149,8 +187,13 @@ function undoLast(game) {
   if (game.status === 'final') return 'Game is finished — reopen it to make changes';
   const event = game.events[game.events.length - 1];
   if (!event) return 'Nothing to undo';
-  game.score.home = Math.max(0, game.score.home - event.scoreEffect.home);
-  game.score.away = Math.max(0, game.score.away - event.scoreEffect.away);
+  if (event.pensEffect) {
+    game.shootout.home = Math.max(0, game.shootout.home - event.pensEffect.home);
+    game.shootout.away = Math.max(0, game.shootout.away - event.pensEffect.away);
+  } else {
+    game.score.home = Math.max(0, game.score.home - event.scoreEffect.home);
+    game.score.away = Math.max(0, game.score.away - event.scoreEffect.away);
+  }
   game.events.pop();
   game.updatedAt = Date.now();
   return null;
@@ -181,12 +224,26 @@ function clockAction(game, action, options = {}) {
     c.running = false;
     c.startedAt = null;
   } else if (action === 'next') {
-    c.period = Math.min(conf.periods + 4, c.period + 1);
+    if (game.shootoutOnly) return null; // a shootout has no next period
+    if (canStartShootout(game)) {
+      game.shootout.active = true;
+      c.period = SHOOTOUT_PERIOD;
+    } else if (inShootout(game)) {
+      return null; // already in the shootout
+    } else {
+      c.period = Math.min(conf.periods + 4, c.period + 1);
+    }
     c.elapsedMs = 0;
     c.running = false;
     c.startedAt = null;
   } else if (action === 'prev') {
-    c.period = Math.max(1, c.period - 1);
+    if (game.shootoutOnly) return null;
+    if (inShootout(game)) {
+      game.shootout.active = false;
+      c.period = 4;
+    } else {
+      c.period = Math.max(1, c.period - 1);
+    }
     c.elapsedMs = 0;
     c.running = false;
     c.startedAt = null;
@@ -225,6 +282,8 @@ module.exports = {
   publicGame,
   newGame,
   applyEvent,
+  inShootout,
+  canStartShootout,
   undoLast,
   clockAction,
   endGame

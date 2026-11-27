@@ -32,7 +32,8 @@ function gamesPanel(data) {
   if (!data.games.length) {
     return `<div class="empty" style="border:0"><span class="big">📅</span><strong>No games yet</strong><span class="tiny">${canEdit() ? 'Add a game or generate the full fixture list.' : 'The organizer has not scheduled any games yet.'}</span></div>`;
   }
-  const rowsFor = list => list.map(g => gameRow(g, byId.get(g.homeTeamId), byId.get(g.awayTeamId))).join('');
+  const owner = canEdit();
+  const rowsFor = list => list.map(g => `<div class="game-row-wrap">${gameRow(g, byId.get(g.homeTeamId), byId.get(g.awayTeamId))}${owner ? `<button class="icon-btn game-del" data-act="delete-game" data-id="${esc(g.id)}" title="Delete game" aria-label="Delete this game">🗑</button>` : ''}</div>`).join('');
   return `
     ${live.length ? `<div class="games-group">Live now</div>${rowsFor(live)}` : ''}
     ${scheduled.length ? `<div class="games-group">Upcoming</div>${rowsFor(scheduled)}` : ''}
@@ -203,6 +204,22 @@ export async function renderTournament(app, id) {
       on('new-game', () => openNewGame(tournament, data.teams, refresh));
       on('add-team', () => openNewTeam(tournament, data.teams.length + 1, refresh));
       on('fixtures', () => openFixtures(tournament, refresh));
+      on('delete-game', async e => {
+        const id = e.currentTarget.dataset.id;
+        const ok = await confirmDialog({
+          title: 'Delete this game',
+          message: 'Delete the game, its score and its events? This cannot be undone.',
+          confirmLabel: 'Delete game'
+        });
+        if (!ok) return;
+        try {
+          await api.del(`/games/${encodeURIComponent(id)}`);
+          toast('Game deleted');
+          refresh();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      });
       on('delete-team', async e => {
         const btn = e.currentTarget;
         const team = data.teams.find(t => t.id === btn.dataset.id);

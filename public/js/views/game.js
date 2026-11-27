@@ -1,11 +1,26 @@
 import { api, canEdit } from '../api.js';
 import { toast, confirmDialog, showFormModal, copyText } from '../ui.js';
-import { esc, colorOf, clockState, periodLabel, embedUrl, SPORT_LABEL, eventLabel, OVERLAY_EVENTS } from '../util.js';
+import { esc, colorOf, clockState, periodLabel, embedUrl, SPORT_LABEL, eventLabel, pensLabel, OVERLAY_EVENTS } from '../util.js';
 import { feedItem, sportPill, statusPill } from '../components.js';
 import { GameSocket, Broadcaster, Viewer, getCamera } from '../live.js';
 import { openStreamLink } from './forms.js';
 
 const NEXT_PERIOD_LABEL = { soccer: 'Next half', basketball: 'Next quarter' };
+
+function inShootout(game) {
+  return Boolean(game.shootout && game.shootout.active);
+}
+
+/** Knockout soccer ties go to penalties once extra time has been played. */
+function canStartShootout(game) {
+  return game.sport === 'soccer' && !game.shootoutOnly && Boolean(game.stage) && game.stage !== 'group' && game.period >= 4;
+}
+
+function nextPeriodText(game) {
+  if (game.shootoutOnly) return 'Penalties';
+  if (canStartShootout(game)) return 'Penalty shootout';
+  return NEXT_PERIOD_LABEL[game.sport] || 'Next period';
+}
 
 function scoreboardHTML(game, home, away, prev) {
   const clock = clockState(game, Date.now());
@@ -21,6 +36,7 @@ function scoreboardHTML(game, home, away, prev) {
       <div class="sb-center">
         <span class="sb-clock${clock.running ? ' running' : ''}" data-sb-clock>${esc(clock.text)}</span>
         <span class="sb-period">${esc(periodLabel(game.sport, game.period))}</span>
+        ${pensLabel(game) ? `<span class="sb-pens" data-sb-pens>${esc(pensLabel(game))}</span>` : ''}
         <span class="sb-status">${game.status === 'live' ? '● Live' : game.status === 'final' ? 'Full time' : 'Kick-off soon'}</span>
       </div>
       <div class="sb-team">
@@ -34,7 +50,7 @@ function scoreboardHTML(game, home, away, prev) {
 function overlayHTML(game, home, away) {
   return `
     <div class="ov-team">${esc(home.short || home.name)}<span class="ov-score">${game.score.home}</span></div>
-    <div class="ov-mid">${esc(periodLabel(game.sport, game.period))}<b data-ov-clock>${esc(clockState(game, Date.now()).text)}</b></div>
+    <div class="ov-mid">${esc(periodLabel(game.sport, game.period))}<b data-ov-clock>${esc(clockState(game, Date.now()).text)}</b>${pensLabel(game) ? `<span class="ov-pens" data-ov-pens>${esc(pensLabel(game))}</span>` : ''}</div>
     <div class="ov-team">${esc(away.short || away.name)}<span class="ov-score">${game.score.away}</span></div>`;
 }
 
@@ -64,28 +80,36 @@ function controlsHTML(game, home, away) {
   return `
     <div class="ctrl-groups">${sideBox('home', home)}${sideBox('away', away)}</div>
     <div class="clock-row">
-      <button class="btn btn-sm ${game.clock.running ? 'btn-ghost' : 'btn-primary'}" data-act="clock-toggle">${game.clock.running ? '⏸ Pause' : '▶ Start clock'}</button>
-      <button class="btn btn-sm btn-ghost" data-act="clock-next">${NEXT_PERIOD_LABEL[game.sport] || 'Next period'}</button>
+      ${inShootout(game)
+        ? '<span class="tiny muted" style="align-self:center">Penalty shootout — the clock is off.</span>'
+        : `<button class="btn btn-sm ${game.clock.running ? 'btn-ghost' : 'btn-primary'}" data-act="clock-toggle">${game.clock.running ? '⏸ Pause' : '▶ Start clock'}</button>`}
+      ${inShootout(game) && !game.shootoutOnly
+        ? '<button class="btn btn-sm btn-ghost" data-act="clock-prev">← Leave penalties</button>'
+        : `<button class="btn btn-sm btn-ghost" data-act="clock-next">${nextPeriodText(game)}</button>`}
       <button class="btn btn-sm btn-ghost" data-act="clock-reset">Reset clock</button>
       <button class="btn btn-sm btn-ghost" data-act="score-edit">Set score</button>
       ${game.stage && game.stage !== 'group' && game.status === 'scheduled'
         ? '<button class="btn btn-sm btn-ghost" data-act="edit-teams">Change teams</button>' : ''}
       <button class="btn btn-sm btn-ghost" data-act="undo">↶ Undo</button>
       <button class="btn btn-sm btn-danger" data-act="end-game">End game</button>
+      <button class="btn btn-sm btn-ghost" data-act="delete-game" title="Delete this game">🗑 Delete game</button>
     </div>`;
 }
 
-const RAPID_ACTIONS = [
-  { type: 'var', label: 'VAR', title: 'VAR review' },
-  { type: 'yellow', label: '🟨 Yellow', title: 'Yellow card' },
-  { type: 'red', label: '🟥 Red', title: 'Red card' },
-  { type: 'yellow_red', label: '🟨🟥 → Red', title: 'Second yellow → red' },
-  { type: 'goal', label: '＋ Goal', title: 'Goal' },
-  { type: 'minus_goal', label: '－ Goal', title: 'Remove a goal' }
-];
+function rapidActions(game) {
+  const pens = inShootout(game);
+  return [
+    { type: 'var', label: 'VAR', title: 'VAR review' },
+    { type: 'yellow', label: '🟨 Yellow', title: 'Yellow card' },
+    { type: 'red', label: '🟥 Red', title: 'Red card' },
+    { type: 'yellow_red', label: '🟨🟥 → Red', title: 'Second yellow → red' },
+    { type: 'goal', label: pens ? '＋ Penalty' : '＋ Goal', title: pens ? 'Penalty scored' : 'Goal' },
+    { type: 'minus_goal', label: pens ? '－ Penalty' : '－ Goal', title: pens ? 'Take a penalty back' : 'Remove a goal' }
+  ];
+}
 
-function rapidBarHTML() {
-  return RAPID_ACTIONS.map(a => `<button type="button" class="rapid-btn ${a.type}" data-rapid="${a.type}" title="${esc(a.title)}">${a.label}</button>`).join('');
+function rapidBarHTML(game) {
+  return rapidActions(game).map(a => `<button type="button" class="rapid-btn ${a.type}" data-rapid="${a.type}" title="${esc(a.title)}">${a.label}</button>`).join('');
 }
 
 function stageHTML() {
@@ -158,6 +182,7 @@ export async function renderGame(app, id) {
             <div class="stage-actions">
               <button class="btn btn-sm btn-primary hidden" data-act="go-live" id="go-live-btn">● Go live</button>
               <button class="btn btn-sm btn-ghost hidden" data-act="stop-live" id="stop-live-btn">Stop stream</button>
+              <button class="btn btn-sm btn-ghost hidden" data-act="fullscreen" id="fs-btn">⛶ Full screen</button>
               <button class="btn btn-sm btn-ghost hidden" data-act="embed" id="embed-btn">Embed a link</button>
               <span class="tiny muted" id="live-hint"></span>
             </div>
@@ -261,6 +286,8 @@ export async function renderGame(app, id) {
     embedBtn.classList.toggle('hidden', !owner || broadcasterActive);
     embedBtn.textContent = rawEmbed ? 'Change embed link' : 'Embed a link';
     $('#stop-live-btn').classList.toggle('hidden', !broadcasterActive);
+    $('#fs-btn').classList.toggle('hidden', !showVideo);
+    $('#fs-btn').textContent = document.fullscreenElement ? '⤢ Exit full screen' : '⛶ Full screen';
     $('#live-hint').textContent = broadcasterActive
       ? 'Keep this tab open while you broadcast.'
       : owner && !rawEmbed ? 'Phone camera works over HTTPS or on localhost.'
@@ -269,7 +296,7 @@ export async function renderGame(app, id) {
     const bar = $('#stage-actbar');
     const showBar = owner && game.status !== 'final';
     bar.classList.toggle('hidden', !showBar);
-    bar.innerHTML = showBar ? rapidBarHTML() : '';
+    bar.innerHTML = showBar ? rapidBarHTML(game) : '';
     renderStageEvents();
   }
 
@@ -333,7 +360,12 @@ export async function renderGame(app, id) {
 
     const cards = { yellow: 'yellow card', red: 'red card', yellow_red: 'second yellow → red' };
     const isCard = Boolean(cards[type]);
-    const title = type === 'goal' ? 'Who scored?' : type === 'minus_goal' ? 'Which goal should be removed?' : `Who gets the ${cards[type]}?`;
+    const pens = inShootout(game);
+    const title = type === 'goal'
+      ? (pens ? 'Who scored the penalty?' : 'Who scored?')
+      : type === 'minus_goal'
+        ? (pens ? 'Whose penalty should be removed?' : 'Which goal should be removed?')
+        : `Who gets the ${cards[type]}?`;
     showFormModal({
       title,
       submitLabel: 'Confirm',
@@ -355,6 +387,16 @@ export async function renderGame(app, id) {
       <option value="home">${esc(data.home.name)}</option>
       <option value="away">${esc(data.away.name)}</option>
     </select>`;
+  }
+
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else if (stageEl.requestFullscreen) await stageEl.requestFullscreen();
+      else toast('This browser cannot put the video full screen', 'error');
+    } catch (err) {
+      toast(err.message || 'Full screen was blocked by the browser', 'error');
+    }
   }
 
   async function sendRapid(body) {
@@ -465,6 +507,12 @@ export async function renderGame(app, id) {
   }
 
   // -------------------------------------------------------------- handlers
+  const syncFsLabel = () => {
+    const btn = $('#fs-btn');
+    if (btn) btn.textContent = document.fullscreenElement ? '⤢ Exit full screen' : '⛶ Full screen';
+  };
+  document.addEventListener('fullscreenchange', syncFsLabel);
+
   socket = new GameSocket(game.id);
   socket.on('status', () => renderInfo());
   socket.on('hello', msg => {
@@ -532,6 +580,7 @@ export async function renderGame(app, id) {
     if (act === 'event') return sendEvent(el.dataset.side, el.dataset.type, el.dataset.points);
     if (act === 'clock-toggle') return mutate(`/games/${encodeURIComponent(game.id)}/clock`, { action: game.clock.running ? 'pause' : 'start' });
     if (act === 'clock-next') return mutate(`/games/${encodeURIComponent(game.id)}/clock`, { action: 'next' });
+    if (act === 'clock-prev') return mutate(`/games/${encodeURIComponent(game.id)}/clock`, { action: 'prev' });
     if (act === 'clock-reset') {
       const ok = await confirmDialog({ title: 'Reset the clock', message: 'Set the clock back to 0:00 for this period?', confirmLabel: 'Reset' });
       if (!ok) return;
@@ -546,17 +595,19 @@ export async function renderGame(app, id) {
           <label class="field"><span class="label">${esc(data.home.name)}</span><input class="input" type="number" min="0" max="999" name="home" value="${game.score.home}"></label>
           <label class="field"><span class="label">${esc(data.away.name)}</span><input class="input" type="number" min="0" max="999" name="away" value="${game.score.away}"></label>
         </div>
+        ${inShootout(game) ? `<div class="form-row">
+          <label class="field"><span class="label">${esc(data.home.name)} penalties</span><input class="input" type="number" min="0" max="99" name="pensHome" value="${game.shootout.home}"></label>
+          <label class="field"><span class="label">${esc(data.away.name)} penalties</span><input class="input" type="number" min="0" max="99" name="pensAway" value="${game.shootout.away}"></label>
+        </div>` : ''}
         <label class="ctrl-box" style="display:flex;align-items:center;gap:9px;padding:12px;cursor:pointer">
           <input type="checkbox" name="final" value="yes" ${game.status === 'final' ? 'checked' : ''}>
           <span>This is the final score — mark the game finished</span>
         </label>`,
         onSubmit: async fields => {
           const final = fields.final === 'yes';
-          const res = await api.post(`/games/${encodeURIComponent(game.id)}/score`, {
-            home: Number(fields.home),
-            away: Number(fields.away),
-            final
-          });
+          const body = { home: Number(fields.home), away: Number(fields.away), final };
+          if (inShootout(game)) body.pens = { home: Number(fields.pensHome), away: Number(fields.pensAway) };
+          const res = await api.post(`/games/${encodeURIComponent(game.id)}/score`, body);
           if (res && res.game) apply(res.game);
           toast(final ? 'Final score saved' : 'Score saved');
         }
@@ -599,7 +650,24 @@ export async function renderGame(app, id) {
       return mutate(`/games/${encodeURIComponent(game.id)}`, { status: 'final' }, 'patch');
     }
     if (act === 'reopen') return mutate(`/games/${encodeURIComponent(game.id)}`, { status: 'live' }, 'patch');
+    if (act === 'delete-game') {
+      const ok = await confirmDialog({
+        title: 'Delete this game',
+        message: 'Delete the game, its score and its events? This cannot be undone.',
+        confirmLabel: 'Delete game'
+      });
+      if (!ok) return;
+      try {
+        await api.del(`/games/${encodeURIComponent(game.id)}`);
+        toast('Game deleted');
+        const quick = data.tournament && data.tournament.quick;
+        location.hash = quick ? '#/live' : `#/t/${encodeURIComponent(game.tournamentId)}`;
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
     if (act === 'go-live') return startBroadcast();
+    if (act === 'fullscreen') return toggleFullscreen();
     if (act === 'stop-live') {
       const ok = await confirmDialog({ title: 'Stop the broadcast', message: 'Viewers will see the scoreboard without video.', confirmLabel: 'Stop stream' });
       if (ok) {
@@ -628,6 +696,7 @@ export async function renderGame(app, id) {
     clearInterval(ticker);
     clearTimeout(bumpTimer);
     app.removeEventListener('click', onClick);
+    document.removeEventListener('fullscreenchange', syncFsLabel);
     if (broadcaster) broadcaster.stop(true);
     if (viewer) viewer.stop();
     if (socket) socket.close();

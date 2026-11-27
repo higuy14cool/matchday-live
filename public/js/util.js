@@ -24,12 +24,21 @@ export function periodLabel(sport, period) {
     if (period <= 4) return `Q${period}`;
     return period === 5 ? 'OT' : `OT${period - 4}`;
   }
-  const names = ['1st Half', '2nd Half', 'ET 1', 'ET 2'];
+  const names = ['1st Half', '2nd Half', 'ET 1', 'ET 2', 'Penalties'];
   return names[period - 1] || `Half ${period}`;
 }
 
 export function shortPeriod(sport, period) {
-  return sport === 'basketball' ? periodLabel(sport, period) : periodLabel(sport, period).replace('Half', 'H');
+  if (sport === 'basketball') return periodLabel(sport, period);
+  if (period >= 5) return 'PENS';
+  return periodLabel(sport, period).replace('Half', 'H');
+}
+
+/** "Pens 4–2" when a shootout has started, otherwise an empty string. */
+export function pensLabel(game) {
+  const pens = game.shootout;
+  if (!pens || (!pens.active && !pens.home && !pens.away)) return '';
+  return `Pens ${pens.home}–${pens.away}`;
 }
 
 /**
@@ -55,6 +64,8 @@ export function eventLabel(event, home, away, sport) {
   const team = event.side === 'home' ? home : away;
   const name = team ? esc(team.name) : 'Team';
   const who = event.player ? ` <span class="ev-player">${esc(event.player)}</span>` : '';
+  if (event.type === 'goal' && event.shootout) return { icon: '⚽', html: `<b>${name}</b> penalty scored${who}` };
+  if (event.type === 'minus_goal' && event.shootout) return { icon: '↩️', html: `<b>${name}</b> penalty removed${who}` };
   if (event.type === 'goal') return { icon: '⚽', html: `<b>${name}</b> goal${who}` };
   if (event.type === 'minus_goal') return { icon: '↩️', html: `<b>${name}</b> goal removed${who}` };
   if (event.type === 'own_goal') return { icon: '🥴', html: `<b>${name}</b> own goal${who}` };

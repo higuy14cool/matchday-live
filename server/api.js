@@ -272,6 +272,9 @@ function createApi({ store, hub, auth }) {
 
     const stage = str(req.body.stage, 12);
     if (stage && !['group', 'qf', 'sf', 'third', 'final', 'placement'].includes(stage)) return bad(res, 'Invalid stage');
+    if (req.body.shootout !== undefined && typeof req.body.shootout !== 'boolean') return bad(res, 'shootout must be true or false');
+    const shootout = req.body.shootout === true;
+    if (shootout && t.sport !== 'soccer') return bad(res, 'Penalty shootouts are soccer only');
     if (stage && t.format && !stagesFor(t.format).includes(stage)) {
       return bad(res, `This tournament does not have a ${stageLabel(stage)}`);
     }
@@ -283,9 +286,10 @@ function createApi({ store, hub, auth }) {
       homeTeamId: home.id,
       awayTeamId: away.id,
       stage,
-      round: str(req.body.round, 40) || stageLabel(stage),
+      round: str(req.body.round, 40) || (shootout ? 'Penalty shootout' : stageLabel(stage)),
       venue: str(req.body.venue, 60),
-      scheduledAt: live ? Date.now() : scheduledAt || Date.now()
+      scheduledAt: live ? Date.now() : scheduledAt || Date.now(),
+      shootout
     });
     if (live) {
       game.status = 'live';
@@ -356,6 +360,9 @@ function createApi({ store, hub, auth }) {
     if (!homeName || !awayName) return bad(res, 'Give both teams a name');
     if (homeName.toLowerCase() === awayName.toLowerCase()) return bad(res, 'Pick two different teams');
     if (body.live !== undefined && typeof body.live !== 'boolean') return bad(res, 'live must be true or false');
+    if (body.shootout !== undefined && typeof body.shootout !== 'boolean') return bad(res, 'shootout must be true or false');
+    const shootout = body.shootout === true;
+    if (shootout && sport !== 'soccer') return bad(res, 'Penalty shootouts are soccer only');
 
     const tournament = {
       id: uniqueId('tr', id => Boolean(store.tournament(id))),
@@ -373,9 +380,10 @@ function createApi({ store, hub, auth }) {
       homeTeamId: teams[0].id,
       awayTeamId: teams[1].id,
       stage: '',
-      round: 'Quick game',
+      round: shootout ? 'Penalty shootout' : 'Quick game',
       venue: '',
-      scheduledAt: Date.now()
+      scheduledAt: Date.now(),
+      shootout
     });
     if (body.live === true) {
       game.status = 'live';
