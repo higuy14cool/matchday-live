@@ -350,29 +350,50 @@ export async function renderGame(app, id) {
       </div>`;
   }
 
+  const EVENT_SHOW_MS = 5000;
+  // Calls already in the game when this page opened are history, not new comments.
+  const shownCalls = new Map((game.events || [])
+    .filter(ev => OVERLAY_EVENTS.has(ev.type))
+    .map(ev => [ev.id, 0])); // event id -> when it leaves the screen
+  let callsTimer = null;
   let lastShownEventId = null;
 
-  /** Left corner of the video: the referee calls and score changes everyone can see. */
+  /** Left corner of the video: each call stays for 5 seconds, then goes. */
   function renderStageEvents() {
     const el = $('#stage-events');
     if (!el) return;
-    const seen = (game.events || []).filter(ev => OVERLAY_EVENTS.has(ev.type)).slice(-3).reverse();
-    const visible = seen.length > 0 && stageState !== 'embed' && game.status !== 'scheduled';
-    el.hidden = !visible;
-    if (!visible) {
+    clearTimeout(callsTimer);
+    callsTimer = null;
+
+    const now = Date.now();
+    const calls = (game.events || []).filter(ev => OVERLAY_EVENTS.has(ev.type)).slice(-3);
+    if (stageState === 'embed' || game.status === 'scheduled') {
+      el.hidden = true;
       el.innerHTML = '';
       return;
     }
-    const newestId = seen[0].id;
-    el.innerHTML = seen
+    for (const ev of calls) {
+      if (!shownCalls.has(ev.id)) shownCalls.set(ev.id, now + EVENT_SHOW_MS);
+    }
+
+    const live = calls.filter(ev => (shownCalls.get(ev.id) || 0) > now).reverse();
+    el.hidden = live.length === 0;
+    el.innerHTML = live
       .map(ev => {
         const info = eventLabel(ev, data.home, data.away, game.sport);
-        return `<div class="stage-ev${ev.id === newestId && newestId !== lastShownEventId ? ' pop' : ''}">
+        return `<div class="stage-ev${ev.id !== lastShownEventId ? ' pop' : ''}">
           <span class="sev-icon">${info.icon}</span><span class="sev-text">${info.html}</span>
         </div>`;
       })
       .join('');
-    lastShownEventId = newestId;
+    if (calls.length) lastShownEventId = calls[calls.length - 1].id;
+
+    const upcoming = [...shownCalls.values()].filter(until => until > now);
+    if (upcoming.length) {
+      callsTimer = setTimeout(() => {
+        if (alive) renderStageEvents();
+      }, Math.max(0, Math.min(...upcoming) - now) + 20);
+    }
   }
 
   /** Admin-only referee buttons: each one asks who it was for, then shows on the viewer's video. */
