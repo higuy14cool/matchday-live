@@ -6,6 +6,11 @@ const { publicTournament, publicTeam, publicGame, newGame, SPORTS } = require('.
 const { ensureOwner, bad, str, color, optionalDate } = require('./api-helpers');
 const { createGamesApi } = require('./games-api');
 const { seedDemo } = require('./demo');
+const { normalizeFormat, stagesFor, stageLabel, buildGroupFixtures } = require('./format');
+
+const MAX_TEAMS = 80;
+const MAX_GAMES = 2000;
+const TEAM_COLORS = ['#9ae64b', '#4cc9f0', '#ff9f45', '#ff5d8f', '#b28dff', '#f4d35e', '#5ee0b5', '#ff8f6b'];
 
 function createApi({ store, hub }) {
   const router = express.Router();
@@ -17,6 +22,51 @@ function createApi({ store, hub }) {
     let id = newId(prefix);
     while (exists(id)) id = newId(prefix);
     return id;
+  }
+
+  function shortName(name, used) {
+    const base = name.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase() || 'TEAM';
+    let short = base;
+    let n = 2;
+    while (used.has(short)) {
+      short = (base.slice(0, 2) + n).slice(0, 4);
+      n += 1;
+    }
+    used.add(short);
+    return short;
+  }
+
+  // Team names arrive together with the tournament so the organizer can set
+  // up the whole competition in one step.
+  function parseTeamNames(raw) {
+    if (raw === undefined) return { names: [] };
+    if (!Array.isArray(raw)) return { error: 'teams must be an array of names' };
+    if (raw.length < 3 || raw.length > MAX_TEAMS) {
+      return { error: `A tournament needs between 3 and ${MAX_TEAMS} teams` };
+    }
+    const names = [];
+    const seen = new Set();
+    for (const item of raw) {
+      const name = str(item, 40);
+      if (!name) return { error: 'Every team needs a name' };
+      const key = name.toLowerCase();
+      if (seen.has(key)) return { error: `Team name "${name}" is used twice` };
+      seen.add(key);
+      names.push(name);
+    }
+    return { names };
+  }
+
+  function buildTeams(tournament, names) {
+    const usedShorts = new Set();
+    return names.map((name, i) => ({
+      id: uniqueId('tm', id => Boolean(store.team(id))),
+      tournamentId: tournament.id,
+      name,
+      short: shortName(name, usedShorts),
+      color: TEAM_COLORS[i % TEAM_COLORS.length],
+      createdAt: Date.now()
+    }));
   }
 
   function tournamentPayload(t) {
@@ -36,6 +86,7 @@ function createApi({ store, hub }) {
   // ----------------------------------------------------------- tournaments
   router.get('/tournaments', (req, res) => {
     const rows = store.tournaments
+      .filter(t => !t.quick)
       .map(t => {
         const games = store.gamesOf(t.id);
         return {
@@ -50,20 +101,59 @@ function createApi({ store, hub }) {
   });
 
   router.post('/tournaments', (req, res) => {
-    const name = str(req.body && req.body.name, 60);
-    const sport = req.body && req.body.sport;
+    const body = req.body || {};
+    const name = str(body.name, 60);
+    const sport = body.sport;
     if (!name) return bad(res, 'Give the tournament a name');
     if (!SPORTS[sport]) return bad(res, 'sport must be soccer or basketball');
+
+    const parsedTeams = parseTeamNames(body.teams);
+    if (parsedTeams.error) return bad(res, parsedTeams.error);
+    const teamNames = parsedTeams.names;
+
+    let format = null;
+    if (body.format !== undefined) {
+      const parsed = normalizeFormat(body.format, teamNames.length);
+      if (parsed.error) return bad(res, parsed.error);
+      format = parsed.format;
+    } else if (teamNames.length) {
+      format = { groups: 1, groupStage: 'single', knockout: 'none', advancePerGroup: 2 };
+    }
+
     const key = makeOwnerKey();
     const tournament = {
       id: uniqueId('tr', id => Boolean(store.tournament(id))),
       name,
       sport,
+      format,
       ownerHash: hashKey(key),
       createdAt: Date.now()
     };
+    const teams = buildTeams(tournament, teamNames);
+
+    let games = [];
+    if (format) {
+      const built = buildGroupFixtures({
+        tournament,
+        teams,
+        format,
+        startAt: Date.now() + 24 * 60 * 60 * 1000,
+        makeId: () => uniqueId('gm', id => Boolean(store.game(id)))
+      });
+      if (built.error) return bad(res, built.error);
+      games = built.games.map(props => newGame(props));
+    }
+
     store.insert('tournaments', tournament);
-    res.status(201).json({ tournament: publicTournament(tournament), ownerKey: key });
+    teams.forEach(team => store.insert('teams', team));
+    games.forEach(game => store.insert('games', game));
+
+    res.status(201).json({
+      tournament: publicTournament(tournament),
+      ownerKey: key,
+      teams: teams.map(publicTeam),
+      games: games.map(publicGame)
+    });
   });
 
   router.get('/tournaments/:id', (req, res) => {
@@ -102,7 +192,7 @@ function createApi({ store, hub }) {
     if (!ensureOwner(t, req, res)) return;
     const name = str(req.body && req.body.name, 40);
     if (!name) return bad(res, 'Give the team a name');
-    if (store.teamsOf(t.id).length >= 64) return bad(res, 'A tournament holds up to 64 teams');
+    if (store.teamsOf(t.id).length >= MAX_TEAMS) return bad(res, `A tournament holds up to ${MAX_TEAMS} teams`);
     const short = str(req.body.short, 4).toUpperCase() || name.slice(0, 3).toUpperCase();
     const team = {
       id: uniqueId('tm', id => Boolean(store.team(id))),
@@ -156,10 +246,18 @@ function createApi({ store, hub }) {
     if (home.tournamentId !== t.id || away.tournamentId !== t.id) {
       return bad(res, 'Both teams must belong to this tournament');
     }
-    if (store.gamesOf(t.id).length >= 400) return bad(res, 'This tournament has the maximum number of games');
+    if (store.gamesOf(t.id).length >= MAX_GAMES) return bad(res, 'This tournament has the maximum number of games');
 
     const scheduledAt = optionalDate(req.body.scheduledAt);
     if (req.body.scheduledAt && scheduledAt === null) return bad(res, 'Invalid date');
+    if (req.body.live !== undefined && typeof req.body.live !== 'boolean') return bad(res, 'live must be true or false');
+    const live = req.body.live === true;
+
+    const stage = str(req.body.stage, 12);
+    if (stage && !['group', 'qf', 'sf', 'final'].includes(stage)) return bad(res, 'Invalid stage');
+    if (stage && t.format && !stagesFor(t.format).includes(stage)) {
+      return bad(res, `This tournament does not have a ${stageLabel(stage)}`);
+    }
 
     const game = newGame({
       id: uniqueId('gm', id => Boolean(store.game(id))),
@@ -167,10 +265,16 @@ function createApi({ store, hub }) {
       sport: t.sport,
       homeTeamId: home.id,
       awayTeamId: away.id,
-      round: str(req.body.round, 40),
+      stage,
+      round: str(req.body.round, 40) || stageLabel(stage),
       venue: str(req.body.venue, 60),
-      scheduledAt: scheduledAt || Date.now()
+      scheduledAt: live ? Date.now() : scheduledAt || Date.now()
     });
+    if (live) {
+      game.status = 'live';
+      game.clock.running = true;
+      game.clock.startedAt = Date.now();
+    }
     store.insert('games', game);
     res.status(201).json({ game: publicGame(game) });
   });
@@ -185,6 +289,9 @@ function createApi({ store, hub }) {
     if (teams.length < 2) return bad(res, 'Add at least two teams first');
     if (store.gamesOf(t.id).length > 0) {
       return bad(res, 'Clear the existing games before generating a schedule', 409);
+    }
+    if (teams.length * (teams.length - 1) / 2 > MAX_GAMES) {
+      return bad(res, `That would create more than ${MAX_GAMES} games. Use the group format instead.`);
     }
 
     const start = optionalDate(req.body && req.body.startAt) || Date.now() + 24 * 60 * 60 * 1000;
@@ -219,6 +326,74 @@ function createApi({ store, hub }) {
       list.splice(1, 0, list.pop());
     }
     res.status(201).json({ games: created, count: created.length });
+  });
+
+  // ------------------------------------------------------------ quick games
+  router.post('/quick-games', (req, res) => {
+    const body = req.body || {};
+    const sport = body.sport;
+    const homeName = str(body.homeName, 40);
+    const awayName = str(body.awayName, 40);
+    if (!SPORTS[sport]) return bad(res, 'sport must be soccer or basketball');
+    if (!homeName || !awayName) return bad(res, 'Give both teams a name');
+    if (homeName.toLowerCase() === awayName.toLowerCase()) return bad(res, 'Pick two different teams');
+    if (body.live !== undefined && typeof body.live !== 'boolean') return bad(res, 'live must be true or false');
+
+    const key = makeOwnerKey();
+    const tournament = {
+      id: uniqueId('tr', id => Boolean(store.tournament(id))),
+      name: `${homeName} vs ${awayName}`,
+      sport,
+      format: null,
+      quick: true,
+      ownerHash: hashKey(key),
+      createdAt: Date.now()
+    };
+    const teams = buildTeams(tournament, [homeName, awayName]);
+    const game = newGame({
+      id: uniqueId('gm', id => Boolean(store.game(id))),
+      tournamentId: tournament.id,
+      sport,
+      homeTeamId: teams[0].id,
+      awayTeamId: teams[1].id,
+      stage: '',
+      round: 'Quick game',
+      venue: '',
+      scheduledAt: Date.now()
+    });
+    if (body.live === true) {
+      game.status = 'live';
+      game.clock.running = true;
+      game.clock.startedAt = Date.now();
+    }
+    store.insert('tournaments', tournament);
+    teams.forEach(team => store.insert('teams', team));
+    store.insert('games', game);
+    res.status(201).json({
+      tournament: publicTournament(tournament),
+      ownerKey: key,
+      teams: teams.map(publicTeam),
+      game: publicGame(game)
+    });
+  });
+
+  router.get('/quick-games', (req, res) => {
+    const games = store.tournaments
+      .filter(t => t.quick)
+      .map(t => {
+        const game = store.gamesOf(t.id)[0];
+        if (!game) return null;
+        return {
+          game: { ...publicGame(game), tournamentName: t.name },
+          tournament: publicTournament(t),
+          home: publicTeam(store.team(game.homeTeamId)),
+          away: publicTeam(store.team(game.awayTeamId))
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.game.updatedAt - a.game.updatedAt)
+      .slice(0, 12);
+    res.json({ games });
   });
 
   // ----------------------------------------------------------------- demo

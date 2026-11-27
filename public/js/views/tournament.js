@@ -4,6 +4,20 @@ import { esc, colorOf, SPORT_ICON, SPORT_LABEL, computeStandings, periodLabel } 
 import { gameRow, statusPill, sportPill } from '../components.js';
 import { openNewTeam, openNewGame, openFixtures } from './forms.js';
 
+function formatText(format) {
+  if (!format) return '';
+  const parts = [];
+  if (format.groupStage === 'none') parts.push('Straight knockout');
+  else {
+    parts.push(`${format.groups} group${format.groups === 1 ? '' : 's'}`);
+    parts.push(format.groupStage === 'double' ? 'double round robin' : 'single round robin');
+  }
+  if (format.knockout === 'quarterfinal') parts.push('QF → SF → Final');
+  else if (format.knockout === 'semifinal') parts.push('SF → Final');
+  else if (format.knockout === 'final') parts.push('Final');
+  return parts.join(' · ');
+}
+
 function teamMap(teams) {
   return new Map(teams.map(t => [t.id, t]));
 }
@@ -23,15 +37,18 @@ function gamesPanel(data) {
     ${final.length ? `<div class="games-group">Results</div>${rowsFor(final)}` : ''}`;
 }
 
-function standingsPanel(data) {
-  const rows = computeStandings(data.teams, data.games, data.tournament.sport);
-  if (!rows.length) return '';
-  const isBasket = data.tournament.sport === 'basketball';
+function groupKey(game) {
+  const match = /^Group ([A-Z])/.exec(game.round || '');
+  return match ? match[1] : '';
+}
+
+function standingsTable(rows, sport, qualifyCount) {
+  const isBasket = sport === 'basketball';
   const head = isBasket
     ? '<th>Team</th><th>P</th><th>W</th><th>L</th><th>PF</th><th>PA</th><th>+/-</th>'
     : '<th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th>';
   const body = rows.map((row, i) => {
-    const qualify = data.teams.length >= 4 && i < 2 && row.played > 0 ? ' class="qualify"' : '';
+    const qualify = qualifyCount && i < qualifyCount && row.played > 0 ? ' class="qualify"' : '';
     const cells = isBasket
       ? `<td>${row.played}</td><td>${row.won}</td><td>${row.lost}</td><td>${row.gf}</td><td>${row.ga}</td><td>${row.gd > 0 ? '+' : ''}${row.gd}</td>`
       : `<td>${row.played}</td><td>${row.won}</td><td>${row.drawn}</td><td>${row.lost}</td><td>${row.gf}</td><td>${row.ga}</td><td>${row.gd > 0 ? '+' : ''}${row.gd}</td><td class="pts">${row.points}</td>`;
@@ -40,17 +57,41 @@ function standingsPanel(data) {
       ${cells}
     </tr>`;
   }).join('');
+  return `
+    <div class="table-wrap" style="border:0;border-radius:0">
+      <table class="standings"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
+    </div>`;
+}
+
+function standingsPanel(data) {
+  const sport = data.tournament.sport;
+  const format = data.tournament.format;
+  const qualifyCount = format ? format.advancePerGroup : 2;
+  const keys = [...new Set(data.games.filter(g => g.stage === 'group').map(groupKey).filter(Boolean))].sort();
+
+  // With several groups, show one table per group; otherwise one overall table.
+  const sections = keys.length
+    ? keys.map(key => {
+        const games = data.games.filter(g => groupKey(g) === key);
+        const ids = new Set(games.flatMap(g => [g.homeTeamId, g.awayTeamId]));
+        const teams = data.teams.filter(t => ids.has(t.id));
+        const rows = computeStandings(teams, games, sport);
+        return { title: `Group ${key}`, rows };
+      })
+    : [{ title: '', rows: computeStandings(data.teams, data.games, sport) }];
+
+  if (!sections.some(section => section.rows.length)) return '';
   const noResults = !data.games.some(g => g.status === 'final');
+  const multi = sections.length > 1;
   return `
     <section class="panel">
       <div class="panel-head">
         <span class="panel-title">Standings</span>
-        <span class="tiny muted">${noResults ? 'Waiting for results' : isBasket ? 'Win / loss' : '3 points for a win'}</span>
+        <span class="tiny muted">${noResults ? 'Waiting for results' : sport === 'basketball' ? 'Win / loss' : '3 points for a win'}</span>
       </div>
-      ${noResults ? '<div class="panel-body tiny muted">The table fills in as games finish.</div>' : `
-      <div class="table-wrap" style="border:0;border-radius:0">
-        <table class="standings"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
-      </div>`}
+      ${noResults ? '<div class="panel-body tiny muted">The tables fill in as games finish.</div>' : sections.map(section => `
+        ${multi ? `<div class="games-group">${esc(section.title)}</div>` : ''}
+        ${standingsTable(section.rows, sport, qualifyCount)}`).join('')}
     </section>`;
 }
 
@@ -89,6 +130,7 @@ function view(data) {
         <div class="page-sub">
           ${sportPill(tournament.sport)}
           <span>${data.teams.length} teams · ${data.games.length} games</span>
+          ${tournament.format ? `<span>${esc(formatText(tournament.format))}</span>` : ''}
           ${liveCount ? `<span class="pill pill-live">${liveCount} live</span>` : ''}
           ${owner ? '<span class="pill" style="color:var(--lime);border-color:rgba(154,230,75,.3)">You organize this</span>' : '<span class="pill">Read only</span>'}
         </div>
@@ -104,9 +146,9 @@ function view(data) {
 
     ${owner ? `
     <div class="row wrap" style="margin-bottom:16px">
-      <button class="btn btn-primary btn-sm" data-act="new-game">+ Schedule game</button>
+      <button class="btn btn-primary btn-sm" data-act="new-game">+ New game</button>
       <button class="btn btn-ghost btn-sm" data-act="add-team">+ Add team</button>
-      ${data.games.length === 0 && data.teams.length >= 2 ? '<button class="btn btn-ghost btn-sm" data-act="fixtures">⚡ Generate full fixture list</button>' : ''}
+      ${!tournament.format && data.games.length === 0 && data.teams.length >= 2 ? '<button class="btn btn-ghost btn-sm" data-act="fixtures">⚡ Generate full fixture list</button>' : ''}
     </div>` : ''}
 
     <div class="tour-layout">
@@ -127,6 +169,7 @@ function view(data) {
           <div class="panel-body tiny muted" style="line-height:1.7">
             Open any game to run the clock, update the score and start a live video with an on-screen scoreboard.
             ${tournament.sport === 'soccer' ? 'Games are two 45-minute halves.' : 'Games are four 10-minute quarters.'}
+            ${tournament.format && tournament.format.knockout !== 'none' ? '<br><br>After the group stage, create the knockout games with <b>+ New game</b> and pick the quarterfinal, semifinal or final stage.' : ''}
             ${owner ? '' : '<br><br>Only the organizer can change scores. You can still watch every update live.'}
           </div>
         </section>

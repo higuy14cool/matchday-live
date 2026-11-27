@@ -91,6 +91,121 @@ test('fixtures create a full single round robin', async () => {
   assert.equal(pairs.size, 6, 'every pairing appears exactly once');
 });
 
+test('a tournament is created with 3 to 80 teams and a format', async () => {
+  const body = {
+    name: 'Wizard Cup',
+    sport: 'soccer',
+    teams: ['Alpha', 'Bravo', 'Charlie'],
+    format: { groups: 1, groupStage: 'single', knockout: 'final', advancePerGroup: 2 }
+  };
+  const res = await json(srv.base, 'POST', '/api/tournaments', { body });
+  assert.equal(res.status, 201);
+  assert.equal(res.data.teams.length, 3);
+  assert.equal(res.data.games.length, 3, 'three teams play a single round robin');
+  assert.equal(res.data.tournament.format.knockout, 'final');
+  assert.ok(res.data.games.every(g => g.stage === 'group'));
+  assert.ok(res.data.games.every(g => /^Round \d+$/.test(g.round)));
+
+  const duplicate = await json(srv.base, 'POST', '/api/tournaments', {
+    body: { ...body, teams: ['Same', 'same', 'Other'] }
+  });
+  assert.equal(duplicate.status, 400);
+  const tooFew = await json(srv.base, 'POST', '/api/tournaments', {
+    body: { ...body, teams: ['One', 'Two'] }
+  });
+  assert.equal(tooFew.status, 400);
+  const tooMany = await json(srv.base, 'POST', '/api/tournaments', {
+    body: { ...body, teams: Array.from({ length: 81 }, (_, i) => `Team ${i}`) }
+  });
+  assert.equal(tooMany.status, 400);
+});
+
+test('the maximum of 80 teams is grouped into a workable schedule', async () => {
+  const teams = Array.from({ length: 80 }, (_, i) => `Team ${String(i + 1).padStart(2, '0')}`);
+  const res = await json(srv.base, 'POST', '/api/tournaments', {
+    body: {
+      name: 'Eighty Cup',
+      sport: 'basketball',
+      teams,
+      format: { groups: 16, groupStage: 'single', knockout: 'quarterfinal', advancePerGroup: 2 }
+    }
+  });
+  assert.equal(res.status, 201);
+  assert.equal(res.data.teams.length, 80);
+  assert.equal(res.data.games.length, 160, '16 groups of five, single round robin');
+  assert.ok(res.data.games.every(g => g.stage === 'group'));
+});
+
+test('knockout stages are limited to the chosen format and can be created by hand', async () => {
+  const res = await json(srv.base, 'POST', '/api/tournaments', {
+    body: {
+      name: 'Stage Cup',
+      sport: 'soccer',
+      teams: ['Alpha', 'Bravo', 'Charlie', 'Delta'],
+      format: { groups: 1, groupStage: 'single', knockout: 'final', advancePerGroup: 2 }
+    }
+  });
+  assert.equal(res.status, 201);
+  const t = { id: res.data.tournament.id, key: res.data.ownerKey };
+  const teams = res.data.teams;
+  const final = await json(srv.base, 'POST', `/api/tournaments/${t.id}/games`, {
+    key: t.key,
+    body: { homeTeamId: teams[0].id, awayTeamId: teams[1].id, stage: 'final' }
+  });
+  assert.equal(final.status, 201);
+  assert.equal(final.data.game.stage, 'final');
+  assert.equal(final.data.game.round, 'Final');
+
+  const quarter = await json(srv.base, 'POST', `/api/tournaments/${t.id}/games`, {
+    key: t.key,
+    body: { homeTeamId: teams[0].id, awayTeamId: teams[2].id, stage: 'qf' }
+  });
+  assert.equal(quarter.status, 400);
+  assert.match(quarter.data.error, /Quarterfinal/);
+});
+
+test('a quick game exists outside a tournament and can start live', async () => {
+  const res = await json(srv.base, 'POST', '/api/quick-games', {
+    body: { sport: 'basketball', homeName: 'Downtown', awayName: 'Uptown', live: true }
+  });
+  assert.equal(res.status, 201);
+  assert.equal(res.data.game.status, 'live');
+  assert.equal(res.data.game.clock.running, true);
+  assert.equal(res.data.tournament.quick, true);
+
+  const list = await json(srv.base, 'GET', '/api/quick-games');
+  assert.equal(list.status, 200);
+  assert.ok(list.data.games.some(row => row.game.id === res.data.game.id));
+  assert.ok(list.data.games.every(row => row.game.tournamentName === row.tournament.name));
+
+  const same = await json(srv.base, 'POST', '/api/quick-games', {
+    body: { sport: 'soccer', homeName: 'Same', awayName: 'same' }
+  });
+  assert.equal(same.status, 400);
+});
+
+test('a final score can be saved and finishes the game in one request', async () => {
+  const res = await json(srv.base, 'POST', '/api/quick-games', {
+    body: { sport: 'soccer', homeName: 'Riverside', awayName: 'Northside', live: true }
+  });
+  assert.equal(res.status, 201);
+  const game = res.data.game;
+  const saved = await json(srv.base, 'POST', `/api/games/${game.id}/score`, {
+    key: res.data.ownerKey,
+    body: { home: 3, away: 1, final: true }
+  });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.data.game.score, { home: 3, away: 1 });
+  assert.equal(saved.data.game.status, 'final');
+  assert.equal(saved.data.game.clock.running, false);
+
+  const bad = await json(srv.base, 'POST', `/api/games/${game.id}/score`, {
+    key: res.data.ownerKey,
+    body: { home: 1, away: 0, final: 'yes' }
+  });
+  assert.equal(bad.status, 400);
+});
+
 test('soccer scoring, undo and the clock behave', async () => {
   const t = await makeTournament('soccer', 'Score Cup');
   const [home, away] = await addTeams(t, ['Home FC', 'Away FC']);
@@ -142,6 +257,33 @@ test('soccer scoring, undo and the clock behave', async () => {
   assert.equal(blocked.status, 400, 'finished games cannot be scored');
   const reopen = await json(srv.base, 'PATCH', `/api/games/${gid}`, { key: t.key, body: { status: 'live' } });
   assert.equal(reopen.data.game.status, 'live');
+});
+
+test('a game can be created already live', async () => {
+  const t = await makeTournament('soccer', 'Kickoff Cup');
+  const [home, away] = await addTeams(t, ['Early FC', 'Late FC']);
+
+  const created = await json(srv.base, 'POST', `/api/tournaments/${t.id}/games`, {
+    key: t.key, body: { homeTeamId: home.id, awayTeamId: away.id, live: true, scheduledAt: '2030-01-01T12:00:00.000Z' }
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.game.status, 'live');
+  assert.equal(created.data.game.clock.running, true, 'the clock starts with the game');
+  assert.ok(created.data.game.scheduledAt <= Date.now(), 'a live game is dated now, not in the future');
+
+  const live = await json(srv.base, 'GET', '/api/live');
+  assert.ok(live.data.games.some(g => g.id === created.data.game.id), 'it shows up under live games');
+
+  const scheduled = await json(srv.base, 'POST', `/api/tournaments/${t.id}/games`, {
+    key: t.key, body: { homeTeamId: away.id, awayTeamId: home.id, live: false }
+  });
+  assert.equal(scheduled.data.game.status, 'scheduled');
+  assert.equal(scheduled.data.game.clock.running, false);
+
+  const invalid = await json(srv.base, 'POST', `/api/tournaments/${t.id}/games`, {
+    key: t.key, body: { homeTeamId: home.id, awayTeamId: away.id, live: 'yes' }
+  });
+  assert.equal(invalid.status, 400, 'live must be a boolean');
 });
 
 test('basketball uses quarters and 1/2/3 point scores', async () => {

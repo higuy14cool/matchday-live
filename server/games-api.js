@@ -128,13 +128,19 @@ function createGamesApi({ store, hub, pushGame }) {
   router.post('/games/:id/score', (req, res) => {
     const ctx = load(req, res);
     if (!ctx) return;
-    const home = req.body && req.body.home;
-    const away = req.body && req.body.away;
+    const body = req.body || {};
+    const home = body.home;
+    const away = body.away;
     if (!Number.isInteger(home) || !Number.isInteger(away) || home < 0 || away < 0 || home > 999 || away > 999) {
       return bad(res, 'home and away must be whole numbers between 0 and 999');
     }
+    if (body.final !== undefined && typeof body.final !== 'boolean') return bad(res, 'final must be true or false');
     ctx.game.score.home = home;
     ctx.game.score.away = away;
+    if (body.final === true) {
+      const error = endGame(ctx.game);
+      if (error) return bad(res, error);
+    }
     ctx.game.updatedAt = Date.now();
     store.save();
     pushGame(ctx.game);

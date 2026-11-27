@@ -437,10 +437,20 @@ export async function renderGame(app, id) {
         bodyHTML: `<div class="form-row">
           <label class="field"><span class="label">${esc(data.home.name)}</span><input class="input" type="number" min="0" max="999" name="home" value="${game.score.home}"></label>
           <label class="field"><span class="label">${esc(data.away.name)}</span><input class="input" type="number" min="0" max="999" name="away" value="${game.score.away}"></label>
-        </div>`,
+        </div>
+        <label class="ctrl-box" style="display:flex;align-items:center;gap:9px;padding:12px;cursor:pointer">
+          <input type="checkbox" name="final" value="yes" ${game.status === 'final' ? 'checked' : ''}>
+          <span>This is the final score — mark the game finished</span>
+        </label>`,
         onSubmit: async fields => {
-          const res = await api.post(`/games/${encodeURIComponent(game.id)}/score`, { home: Number(fields.home), away: Number(fields.away) }, getOwnerKey(game.tournamentId));
+          const final = fields.final === 'yes';
+          const res = await api.post(`/games/${encodeURIComponent(game.id)}/score`, {
+            home: Number(fields.home),
+            away: Number(fields.away),
+            final
+          }, getOwnerKey(game.tournamentId));
           if (res && res.game) apply(res.game);
+          toast(final ? 'Final score saved' : 'Score saved');
         }
       });
     }

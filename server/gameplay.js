@@ -14,7 +14,14 @@ const SCORE_EVENTS = {
 
 // What the browser sees. Owner keys never leave the server.
 function publicTournament(t) {
-  return { id: t.id, name: t.name, sport: t.sport, createdAt: t.createdAt };
+  return {
+    id: t.id,
+    name: t.name,
+    sport: t.sport,
+    format: t.format || null,
+    quick: Boolean(t.quick),
+    createdAt: t.createdAt
+  };
 }
 
 function publicTeam(t) {
@@ -28,6 +35,7 @@ function publicGame(g) {
     tournamentId: g.tournamentId,
     sport: g.sport,
     round: g.round,
+    stage: g.stage || '',
     venue: g.venue,
     scheduledAt: g.scheduledAt,
     status: g.status,
@@ -47,7 +55,7 @@ function publicGame(g) {
   };
 }
 
-function newGame({ id, tournamentId, sport, homeTeamId, awayTeamId, round, venue, scheduledAt }) {
+function newGame({ id, tournamentId, sport, homeTeamId, awayTeamId, stage, round, venue, scheduledAt }) {
   const conf = SPORTS[sport] || SPORTS.soccer;
   return {
     id,
@@ -55,6 +63,7 @@ function newGame({ id, tournamentId, sport, homeTeamId, awayTeamId, round, venue
     sport,
     homeTeamId,
     awayTeamId,
+    stage: stage || '',
     round: round || '',
     venue: venue || '',
     scheduledAt: scheduledAt || Date.now(),
