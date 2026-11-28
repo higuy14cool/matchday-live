@@ -5,6 +5,8 @@ One small Node server, no build step, no database to install.
 
 ![two sports](https://img.shields.io/badge/sports-soccer%20%7C%20basketball-9ae64b)
 
+**Open it now, nothing to install:** https://higuy14cool.github.io/matchday-live/ — the server-free edition that runs entirely in the browser (see [GitHub Pages edition](#github-pages-edition-no-server)). The Node server below is the one to use when several devices must share the same data and the same live stream.
+
 ## What it does
 
 - **Tournaments** – a 3-step wizard: name and sport, then 3 to 80 team names, then the format (1–16 groups, single/double round robin or straight knockout, and final-only, semifinals or quarterfinals).
