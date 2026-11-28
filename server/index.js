@@ -24,7 +24,6 @@ app.disable('x-powered-by');
 // Hosts (Render, Railway, Fly) terminate TLS in front of us: trust one hop so
 // req.ip and protocol come from the real client.
 if (process.env.TRUST_PROXY !== '0') app.set('trust proxy', 1);
-app.get('/api/health', (req, res) => res.json({ ok: true, uptime: Math.round(process.uptime()) }));
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'same-origin');
