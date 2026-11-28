@@ -180,9 +180,11 @@ function createGamesApi({ store, hub, pushGame }) {
           return bad(res, 'Could not save the recording', 500);
         }
         const duration = Number(req.query.duration);
+        const startedAt = Number(req.query.startedAt);
         ctx.game.recording = {
           size: bytes,
           duration: Number.isFinite(duration) && duration > 0 ? Math.round(duration) : null,
+          startedAt: Number.isFinite(startedAt) && startedAt > 0 ? Math.round(startedAt) : null,
           savedAt: Date.now()
         };
         ctx.game.updatedAt = Date.now();
@@ -221,7 +223,8 @@ function createGamesApi({ store, hub, pushGame }) {
       side: body.side,
       points: body.points,
       player: body.player,
-      note: body.note
+      note: body.note,
+      replayMs: body.replayMs
     });
     if (error) return bad(res, error);
     store.save();
@@ -260,6 +263,19 @@ function createGamesApi({ store, hub, pushGame }) {
     }
     ctx.game.score.home = home;
     ctx.game.score.away = away;
+    // Direct score edits are part of the replay timeline too.
+    const replayMs = Number(body.replayMs);
+    const scoreSets = Array.isArray(ctx.game.scoreSets) ? ctx.game.scoreSets : (ctx.game.scoreSets = []);
+    scoreSets.push({
+      at: Date.now(),
+      replayMs: Number.isFinite(replayMs) && replayMs >= 0 ? Math.round(replayMs) : null,
+      home,
+      away,
+      pensHome: ctx.game.shootout && ctx.game.shootout.active ? ctx.game.shootout.home : null,
+      pensAway: ctx.game.shootout && ctx.game.shootout.active ? ctx.game.shootout.away : null,
+      period: ctx.game.clock.period
+    });
+    if (scoreSets.length > 200) scoreSets.splice(0, scoreSets.length - 200);
     if (body.final === true) {
       const error = endGame(ctx.game);
       if (error) return bad(res, error);

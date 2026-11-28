@@ -26,6 +26,7 @@ One small Node server, no build step, no database to install.
 - **Penalty-only games** – tick *Penalty shootout only (no clock)* when creating a soccer game (quick game or tournament game) to start straight in a shootout with no match clock.
 - **Scoreboard on the video** – while a game is live (or a recording is playing) the score, period and clock sit in the **top-left corner of the picture**, like a broadcast score bug. They follow the scoreboard in real time.
 - **Replays of finished games** – while the admin films, the browser records the camera and uploads it when the stream stops or the game ends. The game page then shows the **▶ Replay** player to everyone, including viewers of a finished game. Games with a recording carry a **▶ Replay** note in the tournament fixture list. Deleting a game deletes its video too.
+- **No spoilers in a replay** – a replay starts at 0–0 and the scoreboard (page and picture) scores each goal at the second it happened in the video, so the result is only complete when the recording ends. Goal buttons and direct score edits made while filming store their offset in the video; a game scored on another device falls back to clock time.
 - **Deleting games** – the organizer can delete a game from its page (**🗑 Delete game** in the controls) or from the **🗑** button next to each fixture in a tournament. The game, its score and its events go; a one-game quick tournament goes with it. Viewers never see the button.
 - **Referee bar while filming** – on a live game the admin gets a row of buttons under the video: VAR, yellow card, red card, second yellow → red, add a goal, subtract a goal. Each one asks who it is for (team and player, or a VAR description), then the call appears in the video's left corner for every viewer and disappears 5 seconds later. Goals change only the scoreboard. Viewers never receive these buttons.
 - **Accounts page** (`#/users`) – the admin makes a username and password for each viewer, so they can sign in on their own computer; deleting an account signs that viewer out at once.
@@ -170,11 +171,11 @@ test/     node:test suites for the REST API and the live layer
 
 | Method | Path                         | Purpose                                            |
 | ------ | ---------------------------- | -------------------------------------------------- |
-| `PUT`  | `/api/games/:id/recording`   | admin: upload the recording (`video/webm` body, `?duration=` seconds) |
+| `PUT`  | `/api/games/:id/recording`   | admin: upload the recording (`video/webm` body, `?duration=` seconds, `&startedAt=` ms epoch) |
 | `POST` | `/api/games/:id/recording`   | same, used by `sendBeacon` when the tab closes      |
 | `GET`  | `/api/games/:id/recording`   | any signed-in account: stream the video (Range supported) |
 
-`GET /api/games/:id` and the game lists report `recording: {available, duration, size, savedAt}`.
+`GET /api/games/:id` and the game lists report `recording: {available, duration, size, startedAt, savedAt}`. Games also carry `scoreSets` (direct score edits with their video offset) next to `events`; both events and score sets may hold `replayMs`, the milliseconds into the recording when they happened, which the replay player uses to rebuild the scoreboard at the current video position.
 
 ## Known limits
 

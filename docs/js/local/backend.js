@@ -503,7 +503,8 @@ export function createBackend({ store, auth, publishGame = () => {} }) {
       side: body.side,
       points: body.points,
       player: body.player,
-      note: body.note
+      note: body.note,
+      replayMs: body.replayMs
     });
     if (error) return fail(error);
     store.save();
@@ -541,6 +542,19 @@ export function createBackend({ store, auth, publishGame = () => {} }) {
     }
     game.score.home = home;
     game.score.away = away;
+    // Direct score edits are part of the replay timeline too.
+    const replayMs = Number(body.replayMs);
+    const scoreSets = Array.isArray(game.scoreSets) ? game.scoreSets : (game.scoreSets = []);
+    scoreSets.push({
+      at: Date.now(),
+      replayMs: Number.isFinite(replayMs) && replayMs >= 0 ? Math.round(replayMs) : null,
+      home,
+      away,
+      pensHome: game.shootout && game.shootout.active ? game.shootout.home : null,
+      pensAway: game.shootout && game.shootout.active ? game.shootout.away : null,
+      period: game.clock.period
+    });
+    if (scoreSets.length > 200) scoreSets.splice(0, scoreSets.length - 200);
     if (body.final === true) {
       const error = endGame(game);
       if (error) return fail(error);
@@ -575,15 +589,17 @@ export function createBackend({ store, auth, publishGame = () => {} }) {
   }
 
   // ---------------------------------------------------------- recordings
-  async function saveRecordedVideo(id, blob, duration) {
+  async function saveRecordedVideo(id, blob, duration, startedAt) {
     const loaded = loadGame(id);
     if (loaded.error) return loaded.error;
     if (!blob || !blob.size) return fail('No video data received');
     await saveRecording(id, blob);
     const seconds = Number(duration);
+    const startAt = Number(startedAt);
     loaded.game.recording = {
       size: blob.size,
       duration: Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds) : null,
+      startedAt: Number.isFinite(startAt) && startAt > 0 ? Math.round(startAt) : null,
       savedAt: Date.now()
     };
     loaded.game.updatedAt = Date.now();
@@ -769,7 +785,7 @@ export function createBackend({ store, auth, publishGame = () => {} }) {
       if (seg[2] === 'stream' && m === 'POST') return setStream(gameId, json);
       if (seg[2] === 'recording') {
         if (m === 'GET') return readRecording(gameId);
-        if (m === 'PUT' || m === 'POST') return saveRecordedVideo(gameId, body, query.get('duration'));
+        if (m === 'PUT' || m === 'POST') return saveRecordedVideo(gameId, body, query.get('duration'), query.get('startedAt'));
       }
       return fail('Not found', 404);
     }

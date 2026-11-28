@@ -36,10 +36,10 @@ test.before(async () => {
 
 test.after(async () => { await srv.close(); });
 
-async function upload(cookie, { method = 'PUT', gid = gameId } = {}) {
+async function upload(cookie, { method = 'PUT', gid = gameId, query = 'duration=95' } = {}) {
   const headers = { 'content-type': 'video/webm' };
   if (cookie) headers.cookie = cookie;
-  const res = await fetch(`${srv.base}/api/games/${gid}/recording?duration=95`, { method, headers, body: VIDEO });
+  const res = await fetch(`${srv.base}/api/games/${gid}/recording?${query}`, { method, headers, body: VIDEO });
   const data = await res.json().catch(() => null);
   return { status: res.status, data };
 }
@@ -86,6 +86,33 @@ test('the organizer saves the broadcast and a viewer can watch it afterwards', a
   // sendBeacon on page close arrives as POST.
   const beacon = await upload(adminCookie, { method: 'POST' });
   assert.equal(beacon.status, 200);
+});
+
+test('the recording knows when filming started and where each goal sits in the video', async () => {
+  const startedAt = Date.now() - 95000;
+  const saved = await upload(adminCookie, { query: `duration=95&startedAt=${startedAt}` });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.game.recording.startedAt, startedAt, 'the replay can line the scoreboard up with the picture');
+  assert.equal(saved.data.game.recording.duration, 95);
+
+  const goal = await json(srv.base, 'POST', `/api/games/${gameId}/events`, {
+    body: { side: 'home', type: 'goal', player: 'J. Smith', replayMs: 12345 }
+  });
+  assert.equal(goal.status, 200);
+  assert.equal(goal.data.game.events.at(-1).replayMs, 12345, 'a goal keeps its second of the video');
+
+  const untimed = await json(srv.base, 'POST', `/api/games/${gameId}/events`, { body: { side: 'away', type: 'goal', replayMs: -5 } });
+  assert.equal(untimed.status, 200);
+  assert.equal(untimed.data.game.events.at(-1).replayMs, undefined, 'a negative offset is dropped');
+
+  const set = await json(srv.base, 'POST', `/api/games/${gameId}/score`, { body: { home: 4, away: 2, replayMs: 60000 } });
+  assert.equal(set.status, 200);
+  const last = set.data.game.scoreSets.at(-1);
+  assert.equal(last.replayMs, 60000);
+  assert.equal(last.home, 4);
+  assert.equal(last.away, 2);
+  assert.equal(last.period, set.data.game.period);
+  assert.equal(set.data.game.score.home, 4, 'a direct score edit still saves the score');
 });
 
 test('a game without a recording says so', async () => {

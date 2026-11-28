@@ -24,6 +24,7 @@ function nextPeriodText(game) {
 
 function scoreboardHTML(game, home, away, prev) {
   const clock = clockState(game, Date.now());
+  const replaying = game.status === 'replay';
   const homeBump = prev && game.score.home > prev.home ? ' bump' : '';
   const awayBump = prev && game.score.away > prev.away ? ' bump' : '';
   return `
@@ -34,10 +35,10 @@ function scoreboardHTML(game, home, away, prev) {
         <span class="sb-score${homeBump}" data-side-score="home">${game.score.home}</span>
       </div>
       <div class="sb-center">
-        <span class="sb-clock${clock.running ? ' running' : ''}" data-sb-clock>${esc(clock.text)}</span>
+        <span class="sb-clock${!replaying && clock.running ? ' running' : ''}" data-sb-clock>${esc(replaying ? '▶ Replay' : clock.text)}</span>
         <span class="sb-period">${esc(periodLabel(game.sport, game.period))}</span>
         ${pensLabel(game) ? `<span class="sb-pens" data-sb-pens>${esc(pensLabel(game))}</span>` : ''}
-        <span class="sb-status">${game.status === 'live' ? '● Live' : game.status === 'final' ? 'Full time' : 'Kick-off soon'}</span>
+        <span class="sb-status">${replaying ? 'Recorded' : game.status === 'live' ? '● Live' : game.status === 'final' ? 'Full time' : 'Kick-off soon'}</span>
       </div>
       <div class="sb-team">
         <span class="sb-crest" style="background:${colorOf(away)}">${esc(away.short || 'AWY')}</span>
@@ -50,7 +51,7 @@ function scoreboardHTML(game, home, away, prev) {
 function overlayHTML(game, home, away) {
   return `
     <div class="ov-team">${esc(home.short || home.name)}<span class="ov-score">${game.score.home}</span></div>
-    <div class="ov-mid">${esc(periodLabel(game.sport, game.period))}<b data-ov-clock>${esc(clockState(game, Date.now()).text)}</b>${pensLabel(game) ? `<span class="ov-pens" data-ov-pens>${esc(pensLabel(game))}</span>` : ''}</div>
+    <div class="ov-mid">${esc(periodLabel(game.sport, game.period))}<b data-ov-clock>${esc(game.status === 'replay' ? '▶' : clockState(game, Date.now()).text)}</b>${pensLabel(game) ? `<span class="ov-pens" data-ov-pens>${esc(pensLabel(game))}</span>` : ''}</div>
     <div class="ov-team">${esc(away.short || away.name)}<span class="ov-score">${game.score.away}</span></div>`;
 }
 
@@ -148,6 +149,7 @@ export async function renderGame(app, id) {
   let remoteOnAir = false;
   let viewers = 0;
   let stageState = 'idle';
+  let replayView = null;
   let alive = true;
   let ticker = null;
   let bumpTimer = null;
@@ -214,6 +216,8 @@ export async function renderGame(app, id) {
   const stageEl = $('#stage');
   // Chrome reports an unknown (Infinity) duration for browser-recorded webm.
   // Seeking far ahead makes it scan the file and report the real length.
+  ['timeupdate', 'seeking', 'seeked', 'play', 'pause', 'ended', 'loadedmetadata', 'durationchange']
+    .forEach(name => replayEl.addEventListener(name, () => syncReplayScore()));
   replayEl.addEventListener('loadedmetadata', () => {
     if (replayEl.duration !== Infinity) return;
     replayEl.currentTime = 1e101;
@@ -244,10 +248,65 @@ export async function renderGame(app, id) {
     $('#back-link').setAttribute('href', `#/t/${encodeURIComponent(game.tournamentId)}`);
   }
 
+  // A recorded game carries its score snapshots through the video (`timeline`),
+  // so the scoreboard follows the picture instead of spoiling the result.
+  function replayTimed() {
+    if (Number(game.recording && game.recording.startedAt) > 0) return true;
+    return (game.events || []).some(ev => Number.isFinite(ev.replayMs))
+      || (game.scoreSets || []).some(set => Number.isFinite(set.replayMs));
+  }
+
+  function replayStateAt(ms) {
+    const state = {
+      score: { home: 0, away: 0 },
+      shootout: { active: Boolean(game.shootoutOnly), home: 0, away: 0 },
+      period: game.shootoutOnly ? 5 : 1
+    };
+    for (const step of game.timeline || []) {
+      if (step.t > ms) break;
+      state.score.home = step.home;
+      state.score.away = step.away;
+      state.shootout.active = Boolean(step.shots);
+      state.shootout.home = step.pensHome || 0;
+      state.shootout.away = step.pensAway || 0;
+      state.period = step.period || state.period;
+    }
+    return state;
+  }
+
+  function sameReplayView(a, b) {
+    return Boolean(a && b)
+      && a.score.home === b.score.home && a.score.away === b.score.away
+      && a.shootout.home === b.shootout.home && a.shootout.away === b.shootout.away
+      && a.shootout.active === b.shootout.active && a.period === b.period;
+  }
+
+  function syncReplayScore(force = false) {
+    if (!alive) return;
+    if (stageState !== 'replay' || !replayTimed()) {
+      if (replayView) {
+        replayView = null;
+        renderScoreboard(false);
+      }
+      return;
+    }
+    const next = replayStateAt((replayEl.currentTime || 0) * 1000);
+    if (!force && sameReplayView(replayView, next)) return;
+    replayView = next;
+    renderScoreboard(false);
+  }
+
+  /** What the scoreboards show: the live game, or the recording up to this second. */
+  function shownGame() {
+    if (stageState !== 'replay' || !replayView) return game;
+    return { ...game, score: replayView.score, shootout: replayView.shootout, period: replayView.period, status: 'replay' };
+  }
+
   function renderScoreboard(withBump = true) {
     const ticket = withBump ? prevScore : null;
-    scoreEl.innerHTML = scoreboardHTML(game, data.home, data.away, ticket);
-    overlayEl.innerHTML = overlayHTML(game, data.home, data.away);
+    const view = shownGame();
+    scoreEl.innerHTML = scoreboardHTML(view, data.home, data.away, ticket);
+    overlayEl.innerHTML = overlayHTML(view, data.home, data.away);
     clearTimeout(bumpTimer);
     if (ticket) bumpTimer = setTimeout(() => scoreEl.querySelectorAll('.bump').forEach(el => el.classList.remove('bump')), 400);
   }
@@ -336,6 +395,7 @@ export async function renderGame(app, id) {
     bar.classList.toggle('hidden', !showBar);
     bar.innerHTML = showBar ? rapidBarHTML(game) : '';
     renderStageEvents();
+    syncReplayScore(true);
   }
 
   function renderInfo() {
@@ -487,7 +547,7 @@ export async function renderGame(app, id) {
   }
 
   async function sendRapid(body) {
-    const res = await mutate(`/games/${encodeURIComponent(game.id)}/events`, body);
+    const res = await mutate(`/games/${encodeURIComponent(game.id)}/events`, { ...body, replayMs: replayOffset() });
     if (!res) return false; // keep the dialog open so the admin can retry
     if (res.game) toast(body.type === 'goal' ? 'Goal added' : body.type === 'minus_goal' ? 'Goal removed' : 'Shown to viewers');
     return true;
@@ -508,7 +568,7 @@ export async function renderGame(app, id) {
   }
 
   function tickClock() {
-    if (!alive) return;
+    if (!alive || stageState === 'replay') return;
     const clock = clockState(game, syncedAt);
     app.querySelectorAll('[data-sb-clock], [data-ov-clock]').forEach(el => {
       el.textContent = clock.text;
@@ -530,8 +590,19 @@ export async function renderGame(app, id) {
     }
   }
 
+  // Milliseconds into the recording at this moment — the replay scoreboard
+  // uses it to place every goal at the right second of the video.
+  function replayOffset() {
+    return recordStartedAt ? Math.max(0, Date.now() - recordStartedAt) : undefined;
+  }
+
   function sendEvent(side, type, points) {
-    return mutate(`/games/${encodeURIComponent(game.id)}/events`, { side, type, points: points ? Number(points) : undefined });
+    return mutate(`/games/${encodeURIComponent(game.id)}/events`, {
+      side,
+      type,
+      points: points ? Number(points) : undefined,
+      replayMs: replayOffset()
+    });
   }
 
   // ------------------------------------------------------------- recording
@@ -576,7 +647,8 @@ export async function renderGame(app, id) {
     const duration = recordStartedAt ? Math.round((Date.now() - recordStartedAt) / 1000) : '';
     toast('Saving the recording…');
     try {
-      const res = await fetch(`/api/games/${encodeURIComponent(game.id)}/recording?duration=${duration}`, {
+      const started = recordStartedAt ? `&startedAt=${recordStartedAt}` : '';
+      const res = await fetch(`/api/games/${encodeURIComponent(game.id)}/recording?duration=${duration}${started}`, {
         method: 'PUT',
         headers: { 'content-type': blob.type || 'video/webm' },
         body: blob
@@ -597,7 +669,8 @@ export async function renderGame(app, id) {
     recordedChunks = [];
     if (blob.size < 1024) return;
     const duration = recordStartedAt ? Math.round((Date.now() - recordStartedAt) / 1000) : '';
-    navigator.sendBeacon(`/api/games/${encodeURIComponent(game.id)}/recording?duration=${duration}`, blob);
+    const started = recordStartedAt ? `&startedAt=${recordStartedAt}` : '';
+    navigator.sendBeacon(`/api/games/${encodeURIComponent(game.id)}/recording?duration=${duration}${started}`, blob);
   };
   window.addEventListener('pagehide', flushRecording);
 
@@ -771,7 +844,7 @@ export async function renderGame(app, id) {
         </label>`,
         onSubmit: async fields => {
           const final = fields.final === 'yes';
-          const body = { home: Number(fields.home), away: Number(fields.away), final };
+          const body = { home: Number(fields.home), away: Number(fields.away), final, replayMs: replayOffset() };
           if (inShootout(game)) body.pens = { home: Number(fields.pensHome), away: Number(fields.pensAway) };
           const res = await api.post(`/games/${encodeURIComponent(game.id)}/score`, body);
           if (res && res.game) apply(res.game);

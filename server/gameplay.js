@@ -32,6 +32,59 @@ function canStartShootout(game) {
   return game.clock.period >= 4; // after a second period of extra time
 }
 
+/**
+ * Score snapshots through the recording, so a replay can put the score back to
+ * what it was at any second of the video. `t` is milliseconds into the
+ * recording: the filming client's own offset when it has one, otherwise the
+ * event time measured from the moment filming started.
+ */
+function replayTimeline(g) {
+  const start = g.recording && g.recording.startedAt ? g.recording.startedAt : 0;
+  const when = item => {
+    if (Number.isFinite(item.replayMs)) return Math.max(0, Math.round(item.replayMs));
+    if (start && Number.isFinite(item.at)) return Math.max(0, item.at - start);
+    return 0;
+  };
+  const steps = [];
+  for (const ev of g.events) steps.push({ t: when(ev), ev });
+  for (const set of (g.scoreSets || [])) steps.push({ t: when(set), set });
+  steps.sort((a, b) => a.t - b.t);
+
+  let shots = Boolean(g.shootoutOnly);
+  let home = 0;
+  let away = 0;
+  let pensHome = 0;
+  let pensAway = 0;
+  let period = g.shootoutOnly ? SHOOTOUT_PERIOD : 1;
+  const out = [];
+  for (const step of steps) {
+    if (step.set) {
+      home = step.set.home;
+      away = step.set.away;
+      if (step.set.pensHome != null) {
+        shots = true;
+        pensHome = step.set.pensHome;
+        pensAway = step.set.pensAway || 0;
+      }
+      if (step.set.period) period = step.set.period;
+    } else {
+      const ev = step.ev;
+      if (ev.scoreEffect) {
+        home = Math.max(0, home + ev.scoreEffect.home);
+        away = Math.max(0, away + ev.scoreEffect.away);
+      }
+      if (ev.pensEffect) {
+        shots = true;
+        pensHome = Math.max(0, pensHome + ev.pensEffect.home);
+        pensAway = Math.max(0, pensAway + ev.pensEffect.away);
+      }
+      if (Number.isInteger(ev.period) && ev.period > period) period = ev.period;
+    }
+    out.push({ t: step.t, home, away, shots, pensHome, pensAway, period });
+  }
+  return out;
+}
+
 // What the browser sees. Owner keys never leave the server.
 function publicTournament(t) {
   return {
@@ -76,12 +129,15 @@ function publicGame(g) {
     },
     shootoutOnly: Boolean(g.shootoutOnly),
     events: g.events.slice(-80),
+    timeline: replayTimeline(g),
+    scoreSets: (g.scoreSets || []).slice(-200),
     streamUrl: g.streamUrl || '',
     recording: g.recording
       ? {
         available: true,
         duration: g.recording.duration || null,
         size: g.recording.size || 0,
+        startedAt: g.recording.startedAt || null,
         savedAt: g.recording.savedAt || null
       }
       : null,
@@ -142,6 +198,9 @@ function applyEvent(game, input) {
     at: Date.now(),
     scoreEffect: { home: 0, away: 0 }
   };
+  // How far into the recorded video this happened, so a replay can rebuild the
+  // score as it stood at each moment. Only the filming client knows this.
+  if (Number.isFinite(input.replayMs) && input.replayMs >= 0) event.replayMs = Math.round(input.replayMs);
 
   // During a shootout a goal is a penalty: it moves the shootout score only.
   if (inShootout(game) && (type === 'goal' || type === 'minus_goal')) {
@@ -288,6 +347,7 @@ module.exports = {
   publicTournament,
   publicTeam,
   publicGame,
+  replayTimeline,
   newGame,
   applyEvent,
   inShootout,
