@@ -49,6 +49,18 @@ export class Store {
 
   flush() { this.save(); }
 
+  /** Swaps the whole database (backup restore) and writes it straight away. */
+  replaceAll(data) {
+    this.data = {
+      version: 2,
+      users: data.users,
+      tournaments: data.tournaments,
+      teams: data.teams,
+      games: data.games
+    };
+    this.save();
+  }
+
   get users() { return this.data.users; }
   get tournaments() { return this.data.tournaments; }
   get teams() { return this.data.teams; }

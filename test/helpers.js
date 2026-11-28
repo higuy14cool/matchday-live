@@ -35,6 +35,7 @@ async function startServer(port) {
   return {
     base: `http://127.0.0.1:${port}`,
     ws: `ws://127.0.0.1:${port}/ws`,
+    dataDir,
     async close() {
       child.kill('SIGTERM');
       await new Promise(resolve => child.once('exit', resolve));

@@ -37,4 +37,25 @@ function httpUrl(value) {
   }
 }
 
-module.exports = { ensureAdmin, bad, str, color, optionalDate, httpUrl };
+/** A backup file is only accepted when every collection still looks like ours. */
+function checkBackup(data) {
+  if (!data || typeof data !== 'object') return { error: 'This file is not a Matchday backup' };
+  const out = { version: 1 };
+  for (const key of ['users', 'tournaments', 'teams', 'games']) {
+    const list = data[key];
+    if (!Array.isArray(list)) return { error: `The backup has no "${key}" list` };
+    if (list.length > 5000) return { error: `The backup has too many ${key}` };
+    for (const row of list) {
+      if (!row || typeof row !== 'object' || typeof row.id !== 'string' || !row.id) {
+        return { error: `The backup has a broken ${key} entry` };
+      }
+    }
+    out[key] = list;
+  }
+  if (!out.users.some(u => u && u.role === 'admin')) {
+    return { error: 'A backup needs at least one admin account' };
+  }
+  return { data: out };
+}
+
+module.exports = { ensureAdmin, bad, str, color, optionalDate, httpUrl, checkBackup };

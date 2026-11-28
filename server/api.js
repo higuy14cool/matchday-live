@@ -3,7 +3,7 @@
 const express = require('express');
 const { newId } = require('./store');
 const { publicTournament, publicTeam, publicGame, newGame, SPORTS } = require('./gameplay');
-const { ensureAdmin, bad, str, color, optionalDate } = require('./api-helpers');
+const { ensureAdmin, bad, str, color, optionalDate, checkBackup } = require('./api-helpers');
 const { createGamesApi } = require('./games-api');
 const { seedDemo } = require('./demo');
 const { normalizeFormat, stagesFor, stageLabel, buildGroupFixtures } = require('./format');
@@ -14,7 +14,7 @@ const TEAM_COLORS = ['#9ae64b', '#4cc9f0', '#ff9f45', '#ff5d8f', '#b28dff', '#f4
 
 function createApi({ store, hub, auth }) {
   const router = express.Router();
-  router.use(express.json({ limit: '96kb' }));
+  router.use(express.json({ limit: '4mb' }));
   // Everything below needs a signed-in account; /health stays public.
   router.use((req, res, next) => (req.path === '/health' ? next() : auth.requireUser(req, res, next)));
 
@@ -101,6 +101,35 @@ function createApi({ store, hub, auth }) {
 
   // ---------------------------------------------------------------- health
   router.get('/health', (req, res) => res.json({ ok: true, sport: Object.keys(SPORTS) }));
+
+  // ---------------------------------------------------------------- backup
+  // Whole database in and out, so data can move between hosts and survive a wipe.
+  router.get('/backup', (req, res) => {
+    if (!ensureAdmin(req, res)) return;
+    const day = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Disposition', `attachment; filename="matchday-backup-${day}.json"`);
+    res.json({ app: 'matchday-live', version: 1, exportedAt: Date.now(), data: store.data });
+  });
+
+  router.post('/backup', (req, res) => {
+    if (!ensureAdmin(req, res)) return;
+    const body = req.body || {};
+    if (body.confirm !== 'replace') {
+      return bad(res, 'Send confirm: "replace" to overwrite the whole database');
+    }
+    const data = body.data && typeof body.data === 'object' ? body.data : null;
+    const clean = checkBackup(data);
+    if (clean.error) return bad(res, clean.error);
+    store.replaceAll(clean.data);
+    clean.data.games.forEach(g => hub.broadcastGame(publicGame(g)));
+    res.json({
+      ok: true,
+      users: clean.data.users.length,
+      tournaments: clean.data.tournaments.length,
+      teams: clean.data.teams.length,
+      games: clean.data.games.length
+    });
+  });
 
   // ----------------------------------------------------------- tournaments
   router.get('/tournaments', (req, res) => {

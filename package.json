@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node test/api.test.js && node test/bracket.test.js && node test/live.test.js && node test/auth.test.js && node test/shootout.test.js && node test/recording.test.js && node test/replay-timeline.test.js"
+    "test": "node test/api.test.js && node test/bracket.test.js && node test/live.test.js && node test/auth.test.js && node test/shootout.test.js && node test/recording.test.js && node test/replay-timeline.test.js && node test/backup.test.js"
   },
   "engines": {
     "node": ">=18"

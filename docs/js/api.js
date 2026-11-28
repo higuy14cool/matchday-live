@@ -69,5 +69,9 @@ export const api = {
     create: (body) => request('/users', { method: 'POST', body }),
     remove: (id) => request(`/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     setPassword: (current, password) => request('/auth/password', { method: 'POST', body: { current, password } })
+  },
+  backup: {
+    get: () => request('/backup'),
+    restore: (data) => request('/backup', { method: 'POST', body: { confirm: 'replace', data } })
   }
 };

@@ -1,0 +1,9 @@
+node_modules
+data
+docs
+test
+.git
+.agent_tmp
+*.log
+.env
+*.zip

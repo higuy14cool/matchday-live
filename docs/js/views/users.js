@@ -72,6 +72,17 @@ export async function renderUsers(app) {
             </form>
           </div>
         </section>
+        <section class="panel">
+          <div class="panel-head"><span class="panel-title">Backup &amp; restore</span></div>
+          <div class="panel-body stack">
+            <p class="tiny muted">A backup is one file holding every tournament, team, game and account. Keep it somewhere safe, and load it here on any device or host to bring everything back.</p>
+            <div class="row">
+              <button class="btn btn-ghost" id="backup-download" type="button">\u2b07 Download backup</button>
+              <label class="btn btn-ghost" for="backup-file">\u2b06 Restore from file</label>
+              <input id="backup-file" type="file" accept="application/json,.json" hidden />
+            </div>
+          </div>
+        </section>
       </div>
     </div>`;
 
@@ -99,6 +110,50 @@ export async function renderUsers(app) {
       await api.users.setPassword(current, password);
       toast('Password updated');
       pwForm.reset();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+
+  app.querySelector('#backup-download').addEventListener('click', async () => {
+    try {
+      const res = await api.backup.get();
+      const blob = new Blob([JSON.stringify(res, null, 1)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `matchday-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast('Backup downloaded — keep the file somewhere safe');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+
+  const backupFile = app.querySelector('#backup-file');
+  backupFile.addEventListener('change', async () => {
+    const file = backupFile.files && backupFile.files[0];
+    backupFile.value = '';
+    if (!file) return;
+    let parsed;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch {
+      toast('That file is not a Matchday backup', 'error');
+      return;
+    }
+    const data = parsed && parsed.data ? parsed.data : parsed;
+    const ok = await confirmDialog({
+      title: 'Restore this backup?',
+      message: 'Every tournament, team, game and account will be replaced by the ones in the file. Download a backup first if you are not sure.',
+      confirmLabel: 'Replace everything'
+    });
+    if (!ok) return;
+    try {
+      const res = await api.backup.restore(data);
+      toast(`Restored ${res.tournaments} tournaments, ${res.teams} teams, ${res.games} games, ${res.users} accounts`);
+      setTimeout(() => location.reload(), 1200);
     } catch (err) {
       toast(err.message, 'error');
     }

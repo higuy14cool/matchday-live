@@ -49,8 +49,26 @@ Optional environment variables:
 | `PORT`     | `3000`       | HTTP port                                 |
 | `HOST`     | `0.0.0.0`    | bind address                              |
 | `DATA_DIR` | `./data`     | where `db.json` is written                |
+| `TRUST_PROXY` | `1`       | trust one proxy hop for client IPs; `0` turns it off |
 
-Data lives in a single JSON file (`data/db.json`), written atomically and debounced. Back it up by copying that file.
+Data lives in a single JSON file (`data/db.json`), written atomically and debounced. A copy is also written to `data/backups/db-YYYY-MM-DD.json` once a day, and the last seven are kept.
+
+**Backup and restore in the app:** sign in as an admin, open **Accounts → Backup & restore**, press **Download backup** to save one JSON file with every tournament, team, game and account, and **Restore from file** to load it again on any device or host. Only an admin can do either.
+
+## Put it online
+
+The app is one Node process plus one JSON file, so any host that runs a container with a persistent disk works. `Dockerfile`, `.dockerignore` and `render.yaml` are included.
+
+**Render (what `render.yaml` is written for):**
+
+1. Push the repo, then in the Render dashboard choose **New → Blueprint** and pick this repository.
+2. Render reads `render.yaml`: a Docker web service on the **starter** plan with a 5 GB disk mounted at `/data` (the disk is what keeps your tournaments through restarts and redeploys — a free instance without a disk starts empty every time it wakes).
+3. Apply, wait for the first build, and open the URL Render gives you. First visit: sign in with `higuy14/cool` / `favgame1`, then **Accounts** to change the password and add real accounts.
+4. Bring your data along: on the old copy use **Accounts → Download backup**, then on the new host use **Accounts → Restore from file**.
+
+**Railway or Fly.io:** deploy the same `Dockerfile`, set `DATA_DIR` to a mounted volume (`/data` works), and point the health check at `/api/health`. Set `TRUST_PROXY=0` only if the host does not sit behind a proxy.
+
+The JSON file is the whole database: back it up (or keep the disk) and nothing is lost.
 
 ## GitHub Pages edition (no server)
 

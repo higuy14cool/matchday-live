@@ -34,6 +34,27 @@ const httpUrl = value => {
   }
 };
 
+// A backup file is only accepted when every collection still looks like ours.
+function checkBackup(data) {
+  if (!data || typeof data !== 'object') return { error: 'This file is not a Matchday backup' };
+  const out = {};
+  for (const key of ['users', 'tournaments', 'teams', 'games']) {
+    const list = data[key];
+    if (!Array.isArray(list)) return { error: `The backup has no "${key}" list` };
+    if (list.length > 5000) return { error: `The backup has too many ${key}` };
+    for (const row of list) {
+      if (!row || typeof row !== 'object' || typeof row.id !== 'string' || !row.id) {
+        return { error: `The backup has a broken ${key} entry` };
+      }
+    }
+    out[key] = list;
+  }
+  if (!out.users.some(u => u && u.role === 'admin')) {
+    return { error: 'A backup needs at least one admin account' };
+  }
+  return { data: out };
+}
+
 const ok = (data, status = 200) => ({ status, data });
 const fail = (error, status = 400) => ({ status, data: { error } });
 
@@ -641,6 +662,28 @@ export function createBackend({ store, auth, publishGame = () => {} }) {
 
     // Everything else needs an account.
     if (!auth.currentUser()) return fail('Please sign in', 401);
+
+    if (path === '/backup') {
+      const denied = needAdmin();
+      if (denied) return denied;
+      if (m === 'GET') {
+        return ok({ app: 'matchday-live', version: 1, exportedAt: Date.now(), data: store.data });
+      }
+      if (m === 'POST') {
+        if (json.confirm !== 'replace') return fail('Send confirm: "replace" to overwrite the whole database');
+        const clean = checkBackup(json.data);
+        if (clean.error) return fail(clean.error);
+        store.replaceAll(clean.data);
+        return ok({
+          ok: true,
+          users: clean.data.users.length,
+          tournaments: clean.data.tournaments.length,
+          teams: clean.data.teams.length,
+          games: clean.data.games.length
+        });
+      }
+      return fail('Not found', 404);
+    }
 
     if (seg[0] === 'users') {
       if (m === 'GET') {

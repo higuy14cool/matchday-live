@@ -51,6 +51,23 @@ class Store {
     const tmp = DB_FILE + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(this.data, null, 1));
     fs.renameSync(tmp, DB_FILE);
+    this.writeDailyBackup();
+  }
+
+  // One copy per day, last seven kept: a bad delete or a bad save stays recoverable.
+  writeDailyBackup() {
+    const day = new Date().toISOString().slice(0, 10);
+    if (this.lastBackupDay === day) return;
+    try {
+      const dir = path.join(DATA_DIR, 'backups');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `db-${day}.json`), JSON.stringify(this.data, null, 1));
+      const files = fs.readdirSync(dir).filter(f => /^db-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort();
+      for (const old of files.slice(0, Math.max(0, files.length - 7))) fs.unlinkSync(path.join(dir, old));
+      this.lastBackupDay = day;
+    } catch (err) {
+      console.error('Could not write daily backup:', err.message);
+    }
   }
 
   get users() { return this.data.users; }
@@ -75,6 +92,18 @@ class Store {
     this.data[collection].push(record);
     this.save();
     return record;
+  }
+
+  /** Swaps the whole database (backup restore) and writes it straight away. */
+  replaceAll(data) {
+    this.data = {
+      version: 1,
+      users: data.users,
+      tournaments: data.tournaments,
+      teams: data.teams,
+      games: data.games
+    };
+    this.flush();
   }
 
   remove(collection, id) {

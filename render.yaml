@@ -1,0 +1,19 @@
+# Render blueprint: one Docker web service with a disk, so tournaments survive
+# restarts and redeploys. Create it from the Render dashboard: New > Blueprint,
+# pick this repository, apply.
+services:
+  - type: web
+    name: matchday-live
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    branch: lemon/pages-edition
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: DATA_DIR
+        value: /data
+    disk:
+      name: matchday-data
+      mountPath: /data
+      sizeGB: 5
