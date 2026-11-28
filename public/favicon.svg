@@ -1,6 +1,65 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="8" fill="#0a0f0c"/>
-  <circle cx="16" cy="16" r="10" fill="none" stroke="#9ae64b" stroke-width="2.4"/>
-  <path d="M16 9.5l4.4 3.2-1.7 5.2h-5.4l-1.7-5.2L16 9.5z" fill="#9ae64b"/>
-  <path d="M6.6 14.6l3-.3M25.4 14.6l-3-.3M10 25l1.9-4.4M22 25l-1.9-4.4M16 26v-4.4" stroke="#9ae64b" stroke-width="1.8" fill="none"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="132 112 760 760">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="34%" r="78%">
+      <stop offset="0" stop-color="#16281d"/>
+      <stop offset="0.55" stop-color="#0c1510"/>
+      <stop offset="1" stop-color="#060a08"/>
+    </radialGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9ae64b" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#9ae64b" stop-opacity="0.12"/>
+    </linearGradient>
+    <clipPath id="ball">
+      <circle cx="512" cy="492" r="300"/>
+    </clipPath>
+    <clipPath id="leftHalf">
+      <rect x="212" y="192" width="300" height="600"/>
+    </clipPath>
+    <clipPath id="rightHalf">
+      <rect x="512" y="192" width="300" height="600"/>
+    </clipPath>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+
+  <!-- brand ring -->
+  <circle cx="512" cy="492" r="332" fill="none" stroke="url(#glow)" stroke-width="16" opacity="0.55"/>
+
+  <g clip-path="url(#ball)">
+    <!-- soccer half -->
+    <rect x="212" y="192" width="300" height="600" fill="#f2f7ee"/>
+    <g clip-path="url(#leftHalf)" fill="#0b1410">
+      <polygon points="392,318 447,358 426,422 358,422 337,358"/>
+      <polygon points="286,540 341,580 320,644 252,644 231,580"/>
+      <polygon points="196,376 251,416 230,480 162,480 141,416"/>
+      <polygon points="330,700 385,740 364,804 296,804 275,740"/>
+      <polygon points="470,660 525,700 504,764 436,764 415,700"/>
+    </g>
+    <g clip-path="url(#leftHalf)" stroke="#0b1410" stroke-width="10" stroke-linecap="round" fill="none" opacity="0.9">
+      <path d="M447 358 L520 306"/>
+      <path d="M426 422 L470 470 L470 560"/>
+      <path d="M358 422 L310 470 L286 540"/>
+      <path d="M341 580 L330 700"/>
+      <path d="M252 644 L206 700"/>
+      <path d="M231 580 L162 596"/>
+    </g>
+
+    <!-- basketball half -->
+    <rect x="512" y="192" width="300" height="600" fill="#ff9f45"/>
+    <g clip-path="url(#rightHalf)" stroke="#0b1410" stroke-width="12" fill="none" stroke-linecap="round">
+      <path d="M512 492 H812"/>
+      <path d="M512 196 C 700 300 700 684 512 788"/>
+      <path d="M512 196 C 590 320 590 664 512 788" stroke-width="9" opacity="0.85"/>
+    </g>
+
+    <!-- ball edge and the two sports dividing line -->
+    <circle cx="512" cy="492" r="300" fill="none" stroke="#08100b" stroke-width="14"/>
+    <path d="M512 194 V790" stroke="#08100b" stroke-width="10"/>
+  </g>
+
+  <circle cx="512" cy="492" r="300" fill="none" stroke="#9ae64b" stroke-width="10" opacity="0.85"/>
+
+  <!-- live marker -->
+  <circle cx="744" cy="262" r="42" fill="#ff5d5d"/>
+  <circle cx="744" cy="262" r="62" fill="none" stroke="#ff5d5d" stroke-width="6" opacity="0.35"/>
 </svg>
